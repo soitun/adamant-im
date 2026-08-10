@@ -2,18 +2,23 @@ import { Endpoints } from './types/api/endpoints'
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios'
 import { Node } from '@/lib/nodes/abstract.node'
 import { NODE_LABELS } from '@/lib/nodes/constants'
+import { getConnectionAwareTimeout } from '@/lib/network/connection'
+import type { NodeInfo } from '@/types/wallets'
 
 /**
  * ETH Indexer API
  * https://github.com/Adamant-im/ETH-transactions-storage
  */
 export class EthIndexer extends Node<AxiosInstance> {
-  constructor(url: string) {
-    super(url, 'eth', 'service', NODE_LABELS.EthIndexer)
+  constructor(endpoint: NodeInfo) {
+    super(endpoint, 'eth', 'service', NODE_LABELS.EthIndexer)
   }
 
   protected buildClient(): AxiosInstance {
-    return axios.create({ baseURL: this.url })
+    return axios.create({
+      baseURL: this.url,
+      timeout: getConnectionAwareTimeout(this.healthcheckRequestTimeoutMs)
+    })
   }
 
   /**
@@ -23,13 +28,15 @@ export class EthIndexer extends Node<AxiosInstance> {
   async request<E extends keyof Endpoints>(
     endpoint: E,
     params?: Endpoints[E]['params'],
-    requestConfig?: AxiosRequestConfig
+    requestConfig?: AxiosRequestConfig<Endpoints[E]['params'], Endpoints[E]['params']>
   ): Promise<Endpoints[E]['result']> {
     const [method, path] = endpoint.split(' ')
+    const baseURL = this.getBaseURL(this)
 
     return this.client
       .request({
         ...requestConfig,
+        baseURL,
         url: path,
         method,
         params: method === 'GET' ? params : undefined,
@@ -39,8 +46,9 @@ export class EthIndexer extends Node<AxiosInstance> {
   }
 
   private async fetchServiceInfo(): Promise<{ height: number }> {
-    const [{ max }] = await this.request('GET /max_block')
+    const [{ max, version }] = await this.request('GET /max_block')
     this.height = max
+    this.version = version
 
     return {
       height: this.height

@@ -4,7 +4,8 @@ export default {
   btc: {},
   doge: {},
   dash: {},
-  kly: {},
+  ipfs: {},
   useFastestAdmNode: false,
-  useFastestCoinNode: true
+  useFastestCoinNode: true,
+  useFastestIpfsNode: true
 }

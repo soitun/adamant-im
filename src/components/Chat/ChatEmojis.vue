@@ -1,5 +1,6 @@
 <template>
   <v-menu
+    :open-on-hover="isDesktop"
     :model-value="open"
     :eager="true"
     location="top"
@@ -8,14 +9,23 @@
     transition="slide-y-reverse-transition"
   >
     <template #activator="{ props }">
-      <v-icon class="chat-emojis__icon" icon="mdi-emoticon-outline" size="28" v-bind="props" />
+      <v-icon
+        class="chat-emojis__icon"
+        :icon="mdiEmoticonOutline"
+        :size="COMMON_TRIGGER_ICON_SIZE"
+        v-bind="props"
+      />
     </template>
 
-    <emoji-picker @emoji:select="getEmoji" position="absolute"></emoji-picker>
+    <emoji-picker @emoji:select="getEmoji"></emoji-picker>
   </v-menu>
 </template>
 <script>
 import EmojiPicker from '@/components/EmojiPicker.vue'
+import { mdiEmoticonOutline } from '@mdi/js'
+import { useScreenSize } from '@/hooks/useScreenSize'
+import { COMMON_TRIGGER_ICON_SIZE } from '@/components/common/helpers/uiMetrics'
+
 export default {
   props: {
     open: {
@@ -24,6 +34,14 @@ export default {
     }
   },
   emits: ['onChange', 'get-emoji-picture'],
+  setup() {
+    const { isMobileView } = useScreenSize()
+    return {
+      COMMON_TRIGGER_ICON_SIZE,
+      mdiEmoticonOutline,
+      isDesktop: !isMobileView.value
+    }
+  },
   methods: {
     getEmoji(emoji) {
       this.$emit('get-emoji-picture', emoji)
@@ -38,20 +56,34 @@ export default {
 }
 </script>
 <style lang="scss" scoped>
-@import 'vuetify/settings';
+@use 'sass:map';
+@use 'vuetify/settings';
 
-/** Themes **/
-.v-theme--light {
-  .chat-emojis {
-    &__icon {
-      color: map-get($grey, 'darken-1');
+.chat-emojis {
+  &__icon {
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: calc(var(--a-chat-trigger-hover-inset) * -1);
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0;
+      transition: 0.4s;
+      z-index: -1;
+    }
+
+    &:hover::before {
+      opacity: 0.1;
     }
   }
 }
-.v-theme--dark {
+
+.v-theme--light {
   .chat-emojis {
     &__icon {
-      color: map-get($shades, 'white');
+      color: map.get(settings.$grey, 'darken-1');
     }
   }
 }

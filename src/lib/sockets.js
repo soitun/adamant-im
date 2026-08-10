@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client'
-import random from 'lodash/random'
+import { logger } from '@/utils/devTools/logger'
 
 /**
  * interface Events {
@@ -89,25 +89,21 @@ export class SocketClient extends EventEmitter {
   }
 
   get fastestNode() {
-    return this.nodes.reduce((fastest, current) => {
-      if (!current.online || !current.active || current.outOfSync) {
-        return fastest
-      }
-      return !fastest || fastest.ping > current.ping ? current : fastest
-    })
+    const onlineNodes = this.nodes.filter(this.isActiveSocketNode)
+    if (onlineNodes.length === 0) return undefined
+    return onlineNodes.reduce((fastest, current) =>
+      current.ping < fastest.ping ? current : fastest
+    )
   }
 
   get randomNode() {
-    const activeNodes = this.nodes.filter(
-      (n) => n.online && n.active && !n.outOfSync && n.socketSupport
-    )
-    return activeNodes[random(activeNodes.length - 1)]
+    const onlineNodes = this.nodes.filter(this.isActiveSocketNode)
+    const index = Math.floor(Math.random() * onlineNodes.length)
+    return onlineNodes[index]
   }
 
   get hasActiveNodes() {
-    return Object.values(this.nodes).some(
-      (n) => n.online && n.active && !n.outOfSync && n.socketSupport
-    )
+    return Object.values(this.nodes).some(this.isActiveSocketNode)
   }
 
   get isOnline() {
@@ -115,7 +111,9 @@ export class SocketClient extends EventEmitter {
   }
 
   get isCurrentNodeActive() {
-    return this.nodes.some((node) => node.hostname === this.currentNode.hostname && node.active)
+    return this.nodes.some(
+      (node) => node.hostname === this.currentNode.hostname && this.isActiveSocketNode(node)
+    )
   }
 
   /**
@@ -163,22 +161,24 @@ export class SocketClient extends EventEmitter {
   init(address) {
     this.setAdamantAddress(address)
     this.setSocketReady(true)
-    this.interval = setInterval(() => this.reviseConnection(), this.REVISE_CONNECTION_TIMEOUT)
+    this.interval = setTimeout(() => this.reviseConnection(), this.REVISE_CONNECTION_TIMEOUT)
   }
 
   destroy() {
-    clearInterval(this.interval)
+    clearTimeout(this.interval)
     this.setSocketReady(false)
     this.disconnect()
   }
 
   connect(node) {
-    console.log(`[Socket] Connecting to ${node.socketAddress}..`)
+    logger.log('socket', 'info', `[Socket] Connecting to ${node.socketAddress}..`)
     this.connection = io(`${node.socketAddress}`, { reconnection: false, timeout: 5000 })
 
     this.connection.on('connect', () => {
       this.currentNode = node
-      console.log(
+      logger.log(
+        'sockets',
+        'info',
         `[Socket] Connected to ${node.socketAddress} and subscribed to transactions of ${this.adamantAddress}`
       )
       this.connection.emit('address', this.adamantAddress)
@@ -187,17 +187,17 @@ export class SocketClient extends EventEmitter {
     this.connection.on('disconnect', (reason) => {
       // if (reason === 'ping timeout' || reason === 'io server disconnect') {
       // if (reason != 'io client disconnect') {
-      console.warn('[Socket] Disconnected. Reason:', reason)
+      logger.log('socket', 'warn', '[Socket] Disconnected. Reason:', reason)
       // }
     })
 
     this.connection.on('connect_error', (err) => {
-      console.warn('[Socket] connect_error', err)
+      logger.log('socket', 'warn', '[Socket] connect_error', err)
     })
   }
 
   disconnect() {
-    this.connection && this.connection.close()
+    return this.connection && this.connection.close()
   }
 
   reviseConnection() {
@@ -205,7 +205,8 @@ export class SocketClient extends EventEmitter {
     if (!this.isSocketEnabled) return
     if (!this.hasActiveNodes) {
       this.disconnect()
-      console.warn('[Socket]: No active nodes')
+      logger.log('socket', 'warn', '[Socket]: No active nodes')
+      this.interval = setTimeout(() => this.reviseConnection(), this.REVISE_CONNECTION_TIMEOUT)
       return
     }
 
@@ -220,6 +221,21 @@ export class SocketClient extends EventEmitter {
       this.connect(node)
       this.subscribeToEvents()
     }
+    this.interval = setTimeout(() => this.reviseConnection(), this.REVISE_CONNECTION_TIMEOUT)
+  }
+
+  /**
+   * @param {Node} node
+   */
+  isActiveSocketNode(node) {
+    return (
+      node.online &&
+      node.active &&
+      !node.outOfSync &&
+      node.socketSupport &&
+      node.hasMinNodeVersion &&
+      node.hasSupportedProtocol
+    )
   }
 }
 

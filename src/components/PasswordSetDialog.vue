@@ -1,13 +1,14 @@
 <template>
-  <v-dialog v-model="show" width="500">
+  <v-dialog v-model="show" :class="className" width="var(--a-secondary-dialog-width)">
     <v-card>
-      <v-card-title class="a-text-header">
-        {{ $t('login_via_password.popup_title') }}
+      <v-card-title :class="`${className}__card-title`">
+        {{ t('login_via_password.popup_title') }}
       </v-card-title>
 
       <v-divider class="a-divider" />
 
-      <v-card-text class="pa-4">
+      <v-card-text :class="`${className}__body`">
+        <!--     Todo: check src/components/LoginForm.vue component and consider the possibility to move common code to new component  -->
         <v-text-field
           v-model="password"
           color="primary"
@@ -16,8 +17,8 @@
           class="a-input"
           :type="showPassword ? 'text' : 'password'"
           variant="underlined"
-          :label="$t('login_via_password.enter_password')"
-          :name="Date.now()"
+          :label="t('login_via_password.enter_password')"
+          :name="Date.now().toString()"
           @keyup.enter="submit"
         >
           <template #append-inner>
@@ -25,26 +26,31 @@
               @click="togglePasswordVisibility"
               icon
               :ripple="false"
-              :size="28"
+              :size="AUTH_FORM_TOGGLE_BUTTON_SIZE"
               variant="plain"
             >
-              <v-icon :icon="showPassword ? 'mdi-eye' : 'mdi-eye-off'" :size="24" />
+              <v-icon
+                :icon="showPassword ? mdiEye : mdiEyeOff"
+                :size="AUTH_FORM_TOGGLE_ICON_SIZE"
+              />
             </v-btn>
           </template>
         </v-text-field>
 
-        <div class="a-text-regular-enlarged">
-          {{ $t('login_via_password.article_hint') }}
-          <a @click="openLink(userPasswordAgreementLink)">{{ $t('login_via_password.article') }}</a
+        <div :class="`${className}__article-hint`">
+          {{ t('login_via_password.article_hint') }}
+          <a :class="`${className}__article-link`" @click="openLink(userPasswordAgreementLink)">{{
+            t('login_via_password.article')
+          }}</a
           >.
         </div>
       </v-card-text>
 
-      <v-card-actions class="pa-3">
+      <v-card-actions :class="`${className}__actions`">
         <v-spacer />
 
         <v-btn variant="text" class="a-btn-regular" @click="show = false">
-          {{ $t('transfer.confirm_cancel') }}
+          {{ t('transfer.confirm_cancel') }}
         </v-btn>
 
         <v-btn
@@ -57,83 +63,121 @@
             v-show="showSpinner"
             indeterminate
             color="primary"
-            size="24"
-            class="mr-4"
+            :size="AUTH_FORM_SUBMIT_SPINNER_SIZE"
+            :class="`${className}__submit-spinner`"
           />
-          {{ $t('login_via_password.popup_confirm_text') }}
+          {{ t('login_via_password.popup_confirm_text') }}
         </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 </template>
 
-<script>
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useStore } from 'vuex'
+import { mdiEye, mdiEyeOff } from '@mdi/js'
+import { useI18n } from 'vue-i18n'
+
 import { UserPasswordArticleLink } from '@/lib/constants'
+import { clearDb } from '@/lib/idb'
 import { saveState } from '@/lib/idb/state'
+import { logger } from '@/utils/devTools/logger'
+import {
+  AUTH_FORM_SUBMIT_SPINNER_SIZE,
+  AUTH_FORM_TOGGLE_BUTTON_SIZE,
+  AUTH_FORM_TOGGLE_ICON_SIZE
+} from '@/components/Login/helpers/uiMetrics'
+import { openExternalLink } from '@/lib/openExternalLink'
 
-export default {
-  props: {
-    modelValue: {
-      type: Boolean,
-      required: true
-    }
-  },
-  emits: ['password', 'update:modelValue'],
-  data: () => ({
-    password: '',
-    showSpinner: false,
-    disabledButton: false,
-    userPasswordAgreementLink: UserPasswordArticleLink,
-    showPassword: false
-  }),
-  computed: {
-    show: {
-      get() {
-        return this.modelValue
-      },
-      set(value) {
-        this.$emit('update:modelValue', value)
-      }
-    },
-    isValidForm() {
-      return this.password.length > 0
-    }
-  },
-  methods: {
-    openLink(link) {
-      window.open(link, '_blank', 'resizable,scrollbars,status,noopener')
-    },
-    submit() {
-      if (!this.isValidForm) {
-        return
-      }
-      this.disabledButton = true
-      this.showSpinner = true
+const props = defineProps<{
+  modelValue: boolean
+}>()
 
-      this.$store
-        .dispatch('setPassword', this.password)
-        .then((encodedPassword) => {
-          this.password = ''
+const emit = defineEmits<{
+  (e: 'password', value: string): void
+  (e: 'update:modelValue', value: boolean): void
+}>()
 
-          this.$emit('password', encodedPassword)
+const store = useStore()
+const { t } = useI18n()
+const className = 'password-set-dialog'
 
-          return encodedPassword
-        })
-        .then(() => {
-          return saveState(this.$store)
-        })
-        .catch((err) => {
-          console.error(err)
-        })
-        .finally(() => {
-          this.disabledButton = false
-          this.showSpinner = false
-          this.show = false
-        })
-    },
-    togglePasswordVisibility() {
-      this.showPassword = !this.showPassword
-    }
+const password = ref('')
+const showSpinner = ref(false)
+const disabledButton = ref(false)
+const showPassword = ref(false)
+const userPasswordAgreementLink = UserPasswordArticleLink
+
+const show = computed({
+  get: () => props.modelValue,
+  set: (value) => {
+    emit('update:modelValue', value)
   }
+})
+
+const isValidForm = computed(() => password.value.length > 0)
+
+const openLink = (link: string) => {
+  openExternalLink(link)
+}
+
+const togglePasswordVisibility = () => {
+  showPassword.value = !showPassword.value
+}
+
+const submit = () => {
+  if (!isValidForm.value) return
+
+  disabledButton.value = true
+  showSpinner.value = true
+
+  store
+    .dispatch('setPassword', password.value)
+    .then((encodedPassword) => {
+      return saveState(store).then(() => encodedPassword)
+    })
+    .then((encodedPassword) => {
+      password.value = ''
+      emit('password', encodedPassword)
+    })
+    .catch(async (err) => {
+      try {
+        await clearDb()
+      } catch (cleanupError) {
+        logger.log('password-set-dialog', 'warn', cleanupError)
+      }
+
+      await store.dispatch('removePassword')
+      logger.log('password-set-dialog', 'warn', err)
+    })
+    .finally(() => {
+      disabledButton.value = false
+      showSpinner.value = false
+      show.value = false
+    })
 }
 </script>
+
+<style lang="scss" scoped>
+@use '@/assets/styles/components/_secondary-dialog.scss' as secondaryDialog;
+.password-set-dialog {
+  @include secondaryDialog.a-secondary-dialog-card-frame();
+
+  &__card-title {
+    @include secondaryDialog.a-secondary-dialog-title();
+  }
+
+  &__article-hint {
+    @include secondaryDialog.a-secondary-dialog-body-copy();
+  }
+
+  &__article-link {
+    @include secondaryDialog.a-secondary-dialog-link-action();
+  }
+
+  &__submit-spinner {
+    margin-inline-end: var(--a-auth-control-inline-gap);
+  }
+}
+</style>

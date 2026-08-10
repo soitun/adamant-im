@@ -1,0 +1,84 @@
+<template>
+  <div :class="classes.root">
+    <AChatFile
+      v-for="(file, index) in files"
+      :key="index"
+      :file="file"
+      :partnerId="partnerId"
+      :transaction="transaction"
+      @click="handleClick(file)"
+    />
+  </div>
+</template>
+
+<script lang="ts">
+import { defineComponent, PropType } from 'vue'
+import { FileAsset } from '@/lib/adamant-api/asset'
+import { NormalizedChatMessageTransaction } from '@/lib/chat/helpers'
+import { LocalFile } from '@/lib/files'
+import AChatFile from './AChatFile.vue'
+
+const className = 'a-chat-inline-layout'
+const classes = {
+  root: className
+}
+
+export default defineComponent({
+  components: { AChatFile },
+  props: {
+    transaction: {
+      type: Object as PropType<NormalizedChatMessageTransaction>,
+      required: true
+    },
+    files: {
+      type: Array as PropType<Array<FileAsset | LocalFile>>,
+      required: true
+    },
+    partnerId: {
+      type: String,
+      required: true
+    }
+  },
+  emits: ['click:file'],
+  setup(props, { emit }) {
+    const handleClick = (img: FileAsset | LocalFile) => {
+      emit('click:file', props.files.indexOf(img))
+    }
+
+    return {
+      classes,
+      handleClick
+    }
+  }
+})
+</script>
+
+<style lang="scss">
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss';
+@use 'vuetify/settings';
+
+.a-chat-inline-layout {
+  display: grid;
+  gap: var(--a-space-2);
+  border-style: solid;
+  border-width: var(--a-space-2);
+  border-radius: var(--a-radius-sm);
+  @include mixins.a-surface-elevation-soft();
+}
+
+.v-theme--dark {
+  .a-chat-inline-layout {
+    background-color: map.get(colors.$adm-colors, 'black');
+    border-color: map.get(colors.$adm-colors, 'black');
+  }
+}
+
+.v-theme--light {
+  .a-chat-inline-layout {
+    background-color: map.get(settings.$shades, 'white');
+    border-color: map.get(settings.$shades, 'white');
+  }
+}
+</style>

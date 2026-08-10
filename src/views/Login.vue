@@ -1,98 +1,117 @@
 <template>
-  <v-row justify="center" no-gutters :class="className">
-    <container>
-      <div :class="`${className}__buttons`">
-        <div class="text-right">
-          <language-switcher prepend-icon="mdi-chevron-right" />
-        </div>
-        <div :class="`${className}__settings-button`">
-          <v-btn @click="$router.push('/options/nodes')" icon variant="flat" :size="32">
-            <v-icon icon="mdi-cog" />
-          </v-btn>
-        </div>
-      </div>
-
-      <v-sheet class="text-center mt-4" color="transparent">
-        <logo style="width: 300px" />
-
-        <h1 :class="`${className}__title`">
-          {{ t('login.brand_title') }}
-        </h1>
-        <h2 :class="`${className}__subtitle`" class="hidden-sm-and-down mt-4">
-          {{ t('login.subheader') }}
-        </h2>
-      </v-sheet>
-
-      <v-sheet v-if="!isLoginViaPassword" class="text-center mt-4" color="transparent">
-        <v-row justify="center" no-gutters>
-          <v-col sm="8" md="8" lg="8">
-            <login-form
-              ref="loginForm"
-              v-model="passphrase"
-              @login="onLogin"
-              @error="onLoginError"
-            />
-          </v-col>
-        </v-row>
-
-        <v-row justify="center" class="mt-4" no-gutters>
-          <v-col cols="auto">
-            <v-btn
-              class="ma-2"
-              :title="t('login.scan_qr_code_button_tooltip')"
-              icon
-              variant="text"
-              size="x-small"
-              :class="`${className}__icon`"
-              @click="showQrcodeScanner = true"
-            >
-              <icon><qr-code-scan-icon /></icon>
-            </v-btn>
-          </v-col>
-
-          <v-col cols="auto">
-            <qrcode-capture @detect="onDetectQrcode" @error="onDetectQrcodeError">
+  <component :is="layout">
+    <v-row justify="center" gap="0" :class="className">
+      <container>
+        <div :class="`${className}__buttons`">
+          <div :class="`${className}__language-switcher-wrap`">
+            <language-switcher :prepend-icon="mdiChevronRight" />
+          </div>
+          <div :class="`${className}__settings-button-container`">
+            <router-link to="/options/nodes" custom #default="{ navigate }">
               <v-btn
-                class="ma-2"
-                :title="t('login.login_by_qr_code_tooltip')"
+                @click="navigate"
+                icon
+                variant="plain"
+                :size="AUTH_FORM_SETTINGS_BUTTON_SIZE"
+                :class="`${className}__settings-button`"
+              >
+                <v-icon :icon="mdiCog" />
+              </v-btn>
+            </router-link>
+          </div>
+        </div>
+
+        <v-sheet :class="`${className}__hero`" color="transparent">
+          <logo :class="`${className}__logo`" />
+
+          <h1 :class="`${className}__title`">
+            {{ t('login.brand_title') }}
+          </h1>
+          <h2 :class="`${className}__subtitle`">
+            {{ t('login.subheader') }}
+          </h2>
+        </v-sheet>
+
+        <v-sheet
+          v-if="!isLoginViaPassword"
+          :class="[`${className}__auth-sheet`, `${className}__auth-sheet--centered`]"
+          color="transparent"
+        >
+          <v-row justify="center" gap="0">
+            <v-col sm="8" md="8" lg="8">
+              <login-form
+                ref="loginForm"
+                v-model="passphrase"
+                @login="onLogin"
+                @error="onLoginError"
+              />
+            </v-col>
+          </v-row>
+
+          <v-row justify="center" :class="`${className}__qr-actions-row`" gap="0">
+            <v-col cols="auto">
+              <v-btn
+                :title="t('login.scan_qr_code_button_tooltip')"
                 icon
                 variant="text"
                 size="x-small"
-                :class="`${className}__icon`"
+                :class="[`${className}__icon`, `${className}__qr-action-button`]"
+                @click="showQrcodeScanner = true"
               >
-                <icon><file-icon /></icon>
+                <icon><qr-code-scan-icon /></icon>
               </v-btn>
-            </qrcode-capture>
-          </v-col>
-        </v-row>
-      </v-sheet>
+            </v-col>
 
-      <v-row v-if="!isLoginViaPassword" justify="center" class="mt-8">
-        <v-col sm="8" md="8" lg="8">
-          <passphrase-generator @copy="onCopyPassphrase" />
-        </v-col>
-      </v-row>
+            <v-col cols="auto">
+              <qrcode-capture @detect="onDetectQrcode" @error="onDetectQrcodeError">
+                <v-btn
+                  :title="t('login.login_by_qr_code_tooltip')"
+                  icon
+                  variant="text"
+                  size="x-small"
+                  :class="[`${className}__icon`, `${className}__qr-action-button`]"
+                >
+                  <icon><file-icon /></icon>
+                </v-btn>
+              </qrcode-capture>
+            </v-col>
+          </v-row>
+        </v-sheet>
 
-      <v-sheet v-if="isLoginViaPassword" class="text-center mt-6" color="transparent">
-        <v-row no-gutters justify="center">
+        <v-row v-if="!isLoginViaPassword" justify="center" :class="`${className}__passphrase-row`">
           <v-col sm="8" md="8" lg="8">
-            <login-password-form v-model="password" @login="onLogin" @error="onLoginError" />
+            <passphrase-generator @copy="onCopyPassphrase" />
           </v-col>
         </v-row>
-      </v-sheet>
 
-      <qrcode-scanner-dialog
-        v-if="showQrcodeScanner"
-        v-model="showQrcodeScanner"
-        @scan="onScanQrcode"
-      />
-    </container>
-  </v-row>
+        <v-sheet
+          v-if="isLoginViaPassword"
+          :class="[`${className}__auth-sheet`, `${className}__auth-sheet--centered`]"
+          color="transparent"
+        >
+          <v-row gap="0" justify="center">
+            <v-col sm="8" md="8" lg="8">
+              <login-password-form v-model="password" @login="onLogin" @error="onLoginError" />
+            </v-col>
+          </v-row>
+        </v-sheet>
+
+        <qrcode-scanner-dialog
+          v-if="showQrcodeScanner"
+          v-model="showQrcodeScanner"
+          @scan="onScanQrcode"
+        />
+      </container>
+    </v-row>
+  </component>
 </template>
 
-<script>
-import { nextTick, defineComponent, computed, ref } from 'vue'
+<script lang="ts" setup>
+import { nextTick, computed, ref, useTemplateRef } from 'vue'
 import { useStore } from 'vuex'
+import { useI18n } from 'vue-i18n'
+import { mdiCog, mdiChevronRight } from '@mdi/js'
+import { useRoute } from 'vue-router'
 
 import QrcodeCapture from '@/components/QrcodeCapture.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
@@ -105,138 +124,204 @@ import FileIcon from '@/components/icons/common/File.vue'
 import LoginPasswordForm from '@/components/LoginPasswordForm.vue'
 import Logo from '@/components/icons/common/Logo.vue'
 import { navigateByURI } from '@/router/navigationGuard'
-import { useI18n } from 'vue-i18n'
+import { logger } from '@/utils/devTools/logger'
+import { AUTH_FORM_SETTINGS_BUTTON_SIZE } from '@/components/Login/helpers/uiMetrics'
 
-export default defineComponent({
-  components: {
-    LanguageSwitcher,
-    PassphraseGenerator,
-    LoginForm,
-    QrcodeScannerDialog,
-    QrcodeCapture,
-    Icon,
-    QrCodeScanIcon,
-    FileIcon,
-    LoginPasswordForm,
-    Logo
-  },
-  setup() {
-    const passphrase = ref('')
-    const password = ref('')
-    const showQrcodeScanner = ref(false)
-    const logo = '/img/adamant-logo-transparent-512x512.png'
-    const store = useStore()
-    const { t } = useI18n()
-    const className = 'login-page'
-    const loginForm = ref(null)
+const store = useStore()
+const route = useRoute()
+const { t } = useI18n()
 
-    const isLoginViaPassword = computed(() => store.getters['options/isLoginViaPassword'])
+const className = 'login-page'
+const passphrase = ref('')
+const password = ref('')
+const showQrcodeScanner = ref(false)
+const loginForm = useTemplateRef<InstanceType<typeof LoginForm> | null>('loginForm')
 
-    const onDetectQrcode = (passphrase) => {
-      onScanQrcode(passphrase)
-    }
-    const onDetectQrcodeError = (err) => {
-      passphrase.value = ''
-      store.dispatch('snackbar/show', {
-        message: t('login.invalid_qr_code')
-      })
-      console.warn(err)
-    }
-    const onLogin = () => {
-      if (!store.state.chat.isFulfilled) {
-        store.commit('chat/createAdamantChats')
-        store.dispatch('chat/loadChats').then(() => store.dispatch('startInterval'))
-      } else {
-        store.dispatch('startInterval')
-      }
+const isLoginViaPassword = computed(() => store.getters['options/isLoginViaPassword'])
+const layout = computed(() => route.meta.layout || 'default')
 
-      navigateByURI()
-    }
-    const onLoginError = (key) => {
-      store.dispatch('snackbar/show', {
-        message: t(key)
-      })
-    }
-    const onCopyPassphrase = () => {
-      store.dispatch('snackbar/show', {
-        message: t('home.copied'),
-        timeout: 2000
-      })
-    }
-    const onScanQrcode = (value) => {
-      passphrase.value = value
-      nextTick(() => loginForm.value.submit())
-    }
+const onDetectQrcode = (passphrase: string) => {
+  onScanQrcode(passphrase)
+}
 
-    return {
-      passphrase,
-      password,
-      showQrcodeScanner,
-      logo,
-      className,
-      isLoginViaPassword,
-      t,
-      loginForm,
-      onDetectQrcode,
-      onDetectQrcodeError,
-      onLogin,
-      onLoginError,
-      onCopyPassphrase,
-      onScanQrcode
-    }
+const onDetectQrcodeError = (err: unknown) => {
+  passphrase.value = ''
+  store.dispatch('snackbar/show', {
+    message: t('login.invalid_qr_code')
+  })
+  logger.log('Login', 'warn', err)
+}
+
+const onLogin = () => {
+  if (!store.state.chat.isFulfilled) {
+    store.commit('chat/createAdamantChats')
+    store.dispatch('chat/loadChats').then(() => store.dispatch('startInterval'))
+  } else {
+    store.dispatch('startInterval')
   }
-})
+  navigateByURI()
+}
+
+const onLoginError = (errorMessage: string) => {
+  store.dispatch('snackbar/show', {
+    message: errorMessage,
+    timeout: 3000
+  })
+}
+
+const onCopyPassphrase = () => {
+  store.dispatch('snackbar/show', {
+    message: t('home.copied'),
+    timeout: 2000
+  })
+}
+
+const onScanQrcode = (value: string) => {
+  passphrase.value = value
+  nextTick(() => {
+    loginForm.value?.submit()
+  })
+}
 </script>
 
 <style lang="scss" scoped>
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss';
+@use 'vuetify/settings';
 
 .login-page {
+  --a-login-title-letter-spacing: 0.12em;
+  --a-login-title-gap-from-logo: var(--a-space-6);
+  --a-login-subtitle-gap: var(--a-space-2);
+  --a-login-subtitle-weight: 100;
+  --a-login-auth-sheet-margin-top: var(--a-space-6);
+  --a-login-passphrase-row-margin-top: var(--a-space-10);
+  --a-login-settings-offset-inline: var(--a-space-2);
+  --a-login-settings-hover-overlay-opacity: var(--a-opacity-overlay-soft);
+  --a-login-icon-opacity: var(--a-opacity-icon-muted);
+  --a-login-hero-margin-top: var(--a-space-4);
+  --a-login-qr-actions-row-margin-top: var(--a-space-4);
+  --a-login-qr-action-button-margin: var(--a-space-2);
+  --a-login-bottom-padding: calc(var(--a-space-8) + var(--a-safe-area-bottom));
+  --a-login-bottom-padding-mobile: calc(
+    var(--a-space-10) + var(--a-space-2) + var(--a-safe-area-bottom)
+  );
+
   height: 100%;
+  padding-bottom: var(--a-login-bottom-padding);
+
+  &__logo {
+    width: var(--a-login-hero-logo-width);
+    max-width: 100%;
+    height: auto;
+  }
 
   &__title {
-    font-family: -apple-system, system-ui, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
-      Arial, sans-serif;
-    font-weight: 100;
-    font-size: 40px;
-    line-height: 40px;
-    text-transform: uppercase;
+    @include mixins.a-text-headline();
+    font-family: var(--a-font-family-sans);
+    line-height: var(--a-login-hero-title-line-height);
+    letter-spacing: var(--a-login-title-letter-spacing);
+    margin-top: var(--a-login-title-gap-from-logo);
+    margin-bottom: 0;
   }
   &__subtitle {
-    font-family: -apple-system, system-ui, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
-      Arial, sans-serif;
-    font-weight: 100;
-    font-size: 18px;
+    @include mixins.a-text-caption-light();
+    font-family: var(--a-font-family-sans);
+    font-weight: var(--a-login-subtitle-weight);
+    margin-top: var(--a-login-subtitle-gap);
+    margin-bottom: 0;
   }
   &__icon {
-    transition: 0.2s linear;
+    transition:
+      opacity var(--a-motion-base) linear,
+      color var(--a-motion-base) linear;
   }
+
+  &__language-switcher-wrap,
+  &__hero,
+  &__auth-sheet--centered {
+    text-align: end;
+  }
+
+  &__hero,
+  &__auth-sheet--centered {
+    text-align: center;
+  }
+
   &__buttons {
     position: relative;
   }
-  &__settings-button {
+
+  &__hero {
+    margin-top: var(--a-login-hero-margin-top);
+  }
+
+  &__settings-button-container {
     position: absolute;
     right: 0;
-    margin-right: 8px;
-    color: map-get($adm-colors, 'grey-transparent');
+    margin-right: var(--a-login-settings-offset-inline);
+  }
+  &__settings-button {
+    &:hover > ::v-deep(.v-btn__overlay) {
+      display: block;
+      opacity: var(--a-login-settings-hover-overlay-opacity);
+    }
+
+    &:focus-visible {
+      box-shadow: var(--a-focus-ring);
+      border-radius: var(--a-radius-round);
+    }
+  }
+
+  &__passphrase-row {
+    margin-top: var(--a-login-passphrase-row-margin-top);
+  }
+
+  &__auth-sheet {
+    margin-top: var(--a-login-auth-sheet-margin-top);
+  }
+
+  &__qr-actions-row {
+    margin-top: var(--a-login-qr-actions-row-margin-top);
+  }
+
+  &__qr-action-button {
+    margin: var(--a-login-qr-action-button-margin);
+  }
+
+  @media #{map.get(settings.$display-breakpoints, 'sm-and-down')} {
+    padding-bottom: var(--a-login-bottom-padding-mobile);
   }
 }
 
 /** Themes **/
 .v-theme--light {
   .login-page {
-    &__icon,
     &__title,
     &__subtitle {
-      color: map-get($adm-colors, 'regular');
+      color: map.get(colors.$adm-colors, 'regular');
+    }
+
+    &__icon {
+      color: map.get(colors.$adm-colors, 'black2');
+      opacity: var(--a-login-icon-opacity);
+
+      &:hover {
+        opacity: 1;
+      }
     }
   }
 }
 .v-theme--dark {
   .login-page {
     &__icon {
-      color: map-get($shades, 'white');
+      color: var(--a-color-text-muted-dark);
+
+      &:hover {
+        color: map.get(colors.$adm-colors, 'secondary');
+        opacity: 1;
+      }
     }
   }
 }

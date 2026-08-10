@@ -1,15 +1,19 @@
 <template>
   <thead :class="classes.root">
     <tr>
-      <th :class="classes.checkbox" v-if="!hideCheckbox" />
-      <th :class="classes.label" class="pl-0 pr-2" v-if="!hideLabel">{{ t('nodes.coin') }}</th>
-      <th :class="classes.th" class="pl-0 pr-2" v-if="!hideHost">
+      <th :class="classes.checkbox" v-if="!hideCheckbox">
+        <NodeStatusCheckbox v-model="isAllEnabled" :indeterminate="indeterminate" />
+      </th>
+      <th :class="classes.label" v-if="label">
+        {{ label }}
+      </th>
+      <th :class="classes.th" v-if="!hideHost">
         {{ t('nodes.host') }}
       </th>
-      <th :class="classes.th" class="pl-0 pr-2" v-if="!hidePing">
+      <th :class="classes.th" v-if="!hidePing">
         {{ t('nodes.ping') }}
       </th>
-      <th :class="classes.th" class="pl-0 pr-2" v-if="!hideSocket">
+      <th :class="classes.th" v-if="!hideSocket">
         {{ t('nodes.socket') }}
       </th>
     </tr>
@@ -17,14 +21,27 @@
 </template>
 
 <script>
+import { computed } from 'vue'
+import NodeStatusCheckbox from './NodeStatusCheckbox.vue'
 import { useI18n } from 'vue-i18n'
 
+const className = 'nodes-table-head'
+const classes = {
+  root: className,
+  th: `${className}__th`,
+  checkbox: `${className}__checkbox`,
+  label: `${className}__label`
+}
+
 export default {
+  components: {
+    NodeStatusCheckbox
+  },
   props: {
-    hideCheckbox: {
+    modelValue: {
       type: Boolean
     },
-    hideLabel: {
+    hideCheckbox: {
       type: Boolean
     },
     hideHost: {
@@ -35,43 +52,78 @@ export default {
     },
     hideSocket: {
       type: Boolean
+    },
+    label: {
+      type: String
+    },
+    indeterminate: {
+      type: Boolean
     }
   },
-  setup() {
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
     const { t } = useI18n()
 
-    const className = 'nodes-table-head'
-    const classes = {
-      root: className,
-      th: `${className}__th`,
-      checkbox: `${className}__checkbox`,
-      label: `${className}__label`
-    }
+    const isAllEnabled = computed({
+      get() {
+        return props.modelValue
+      },
+      set(value) {
+        emit('update:modelValue', value)
+      }
+    })
 
     return {
       classes,
-      t
+      t,
+      isAllEnabled
     }
   }
 }
 </script>
 
 <style lang="scss">
-@import 'vuetify/settings';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
 
 .nodes-table-head {
-  &__th {
-    font-size: 12px;
+  --a-nodes-table-head-font-size: var(--a-font-size-xs);
+  --a-nodes-table-head-padding-inline-end: var(--a-space-2);
+
+  th.nodes-table-head__th {
+    font-size: var(--a-nodes-table-head-font-size);
+    padding-left: 0;
+    padding-right: var(--a-nodes-table-head-padding-inline-end);
   }
 
-  &__checkbox {
-    padding-left: 0 !important;
-    padding-right: 0 !important;
+  th.nodes-table-head__checkbox {
+    padding-left: 0;
+    padding-right: 0;
   }
 
-  &__label {
-    font-size: 12px;
-    width: 104px;
+  th.nodes-table-head__label {
+    font-size: var(--a-nodes-table-head-font-size);
+    width: var(--a-nodes-table-head-label-width);
+    padding-left: 0;
+    padding-right: var(--a-nodes-table-head-padding-inline-end);
+  }
+}
+
+/** Themes **/
+.v-theme--light {
+  .nodes-table-head {
+    &__th,
+    &__label {
+      color: map.get(colors.$adm-colors, 'regular');
+    }
+  }
+}
+.v-theme--dark {
+  .nodes-table-head {
+    &__th,
+    &__label {
+      color: map.get(colors.$adm-colors, 'white');
+    }
   }
 }
 </style>

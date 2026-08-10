@@ -1,4 +1,10 @@
-import { isNodeOfflineError } from '@/lib/nodes/utils/errors'
+import {
+  CreateNewChatMessageResponseDto,
+  GetHeightResponseDto,
+  RegisterChatMessageTransaction
+} from '@/lib/schema/client'
+import { NODE_LABELS } from '@/lib/nodes/constants'
+import type { NodeInfo } from '@/types/wallets'
 import { AdmNode, Payload, RequestConfig } from './AdmNode'
 import { Client } from '../abstract.client'
 
@@ -10,8 +16,8 @@ import { Client } from '../abstract.client'
  * is not available at the moment.
  */
 export class AdmClient extends Client<AdmNode> {
-  constructor(endpoints: string[] = [], minNodeVersion = '0.0.0') {
-    super('adm')
+  constructor(endpoints: NodeInfo[] = [], minNodeVersion = '0.0.0') {
+    super('adm', 'node', NODE_LABELS.AdmNode)
     this.nodes = endpoints.map((endpoint) => new AdmNode(endpoint, minNodeVersion))
     this.minNodeVersion = minNodeVersion
 
@@ -41,22 +47,21 @@ export class AdmClient extends Client<AdmNode> {
    * @param {RequestConfig} config request config
    */
   async request<P extends Payload = Payload, R = any>(config: RequestConfig<P>): Promise<R> {
-    const node = this.useFastest ? this.getFastestNode() : this.getRandomNode()
-    if (!node) {
-      // All nodes seem to be offline: let's refresh the statuses
-      this.checkHealth()
-      // But there's nothing we can do right now
-      return Promise.reject(new Error('No online nodes at the moment'))
-    }
+    return this.requestWithRetry((node) => node.request(config))
+  }
 
-    return node.request(config).catch((error) => {
-      if (isNodeOfflineError(error)) {
-        // Initiate nodes status check
-        this.checkHealth()
-        // If the selected node is not available, repeat the request with another one.
-        return this.request(config)
-      }
-      throw error
+  async getHeight() {
+    const result = await this.request<Payload, GetHeightResponseDto>({
+      method: 'get',
+      url: '/api/blocks/getHeight'
     })
+
+    return result.height
+  }
+
+  async sendChatTransaction(
+    transaction: RegisterChatMessageTransaction
+  ): Promise<CreateNewChatMessageResponseDto> {
+    return this.post('/api/chats/process', () => ({ transaction }))
   }
 }

@@ -5,37 +5,53 @@
       [classes.nonClickable]: !!errorCode
     }"
   >
-    <v-progress-circular v-if="loading" indeterminate size="16" />
+    <v-progress-circular v-if="loading" indeterminate :size="QUOTED_MESSAGE_LOADING_SPINNER_SIZE" />
 
     <div v-else-if="errorCode === ErrorCodes.INVALID_MESSAGE" :class="classes.invalidMessage">
-      {{ '{ ' + $t('chats.invalid_message') + ' }' }}
+      {{ '{ ' + t('chats.invalid_message') + ' }' }}
     </div>
 
     <div v-else-if="errorCode === ErrorCodes.MESSAGE_NOT_FOUND" :class="classes.messageNotFound">
-      {{ '{ ' + $t('chats.message_not_found') + ' }' }}
+      {{ '{ ' + t('chats.message_not_found') + ' }' }}
     </div>
 
     <div v-else-if="transaction" :class="classes.message">
       <span v-if="isCryptoTransfer">
         {{ cryptoTransferLabel }}
       </span>
+
+      <span v-else-if="isAttachment">
+        <span v-if="transaction.asset.files.length > 0">
+          [{{ transaction.asset.files.length }} {{ t('chats.files') }}]:
+        </span>
+        {{ transaction.message }}
+      </span>
+
       <span v-else>
-        <span v-html="messageLabel"></span>
+        <preview-text :text="messageLabel" />
       </span>
     </div>
   </div>
 </template>
 
-<script>
+<script lang="ts">
 import { computed, defineComponent, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStore } from 'vuex'
 
-import { getTransaction, decodeChat } from '@/lib/adamant-api'
-import { normalizeMessage } from '@/lib/chat/helpers'
+import { getTransaction, decodeChat, getVerifiedCounterpartyPublicKey } from '@/lib/adamant-api'
+import {
+  isChatTransactionVisible,
+  NormalizedChatMessageTransaction,
+  normalizeMessage
+} from '@/lib/chat/helpers'
 import { Cryptos } from '@/lib/constants'
 import currencyFormatter from '@/filters/currencyAmountWithSymbol'
-import { formatMessage } from '@/lib/markdown'
+import PreviewText from '@/components/common/PreviewText'
+import { formatChatPreviewMessage } from '@/lib/markdown'
+import { ChatMessageTransaction } from '@/lib/schema/client/api'
+import { logger } from '@/utils/devTools/logger'
+import { QUOTED_MESSAGE_LOADING_SPINNER_SIZE } from '@/components/AChat/helpers/uiMetrics'
 
 const className = 'quoted-message'
 const classes = {
@@ -47,12 +63,16 @@ const classes = {
 }
 
 const ErrorCodes = {
-  MESSAGE_NOT_FOUND: 'MESSAGE_NOT_FOUND',
-  INVALID_MESSAGE: 'INVALID_MESSAGE'
-}
+  INVALID_MESSAGE: 'INVALID_MESSAGE',
+  MESSAGE_NOT_FOUND: 'MESSAGE_NOT_FOUND'
+} as const
+
+type TErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes]
 
 class ValidationError extends Error {
-  constructor(message, errorCode) {
+  public errorCode: TErrorCode
+
+  constructor(message: string, errorCode: TErrorCode) {
     super(message)
 
     this.name = 'ValidationError'
@@ -60,8 +80,8 @@ class ValidationError extends Error {
   }
 }
 
-async function fetchTransaction(transactionId, address) {
-  const rawTx = await getTransaction(transactionId, 1)
+async function fetchTransaction(transactionId: string, address: string) {
+  const rawTx = (await getTransaction(transactionId, 1)) as ChatMessageTransaction | null
 
   if (!rawTx) {
     throw new ValidationError(
@@ -70,10 +90,29 @@ async function fetchTransaction(transactionId, address) {
     )
   }
 
-  const publicKey = rawTx.senderId === address ? rawTx.recipientPublicKey : rawTx.senderPublicKey
-  const decodedTransaction = rawTx.type === 0 ? rawTx : decodeChat(rawTx, publicKey)
+  if (!isChatTransactionVisible(rawTx)) {
+    throw new ValidationError(
+      `QuotedMessage: Signal messages are hidden: txId: ${transactionId}`,
+      ErrorCodes.MESSAGE_NOT_FOUND
+    )
+  }
 
-  if (!decodedTransaction.message) {
+  // A quote is fetched by id straight from a node, so the key it hands back has to derive the
+  // address it is attributed to. Otherwise a node can answer with its own key and a ciphertext
+  // it wrote, and the quote renders as words the counterparty never said.
+  let decodedTransaction: ChatMessageTransaction | ReturnType<typeof decodeChat>
+
+  try {
+    decodedTransaction =
+      rawTx.type === 0 ? rawTx : decodeChat(rawTx, getVerifiedCounterpartyPublicKey(rawTx, address))
+  } catch (error) {
+    throw new ValidationError(
+      `QuotedMessage: ${(error as Error).message}`,
+      ErrorCodes.INVALID_MESSAGE
+    )
+  }
+
+  if (!('message' in decodedTransaction)) {
     throw new ValidationError(
       `QuotedMessage: Cannot decode the message: txId: ${transactionId}`,
       ErrorCodes.INVALID_MESSAGE
@@ -84,6 +123,9 @@ async function fetchTransaction(transactionId, address) {
 }
 
 export default defineComponent({
+  components: {
+    PreviewText
+  },
   props: {
     /**
      * Quoted message ID (see AIP-16: `replyto_id`)
@@ -98,18 +140,18 @@ export default defineComponent({
 
     const loading = ref(false)
     const store = useStore()
-    const errorCode = ref(false)
+    const errorCode = ref<TErrorCode | null>(null)
 
-    const stateTransaction = ref(null)
+    const stateTransaction = ref<NormalizedChatMessageTransaction | null>(null)
     const cachedTransaction = computed(() => store.getters['chat/messageById'](props.messageId))
     const transaction = computed(() => stateTransaction.value || cachedTransaction.value)
 
     const address = computed(() => store.state.address)
     const isCryptoTransfer = computed(() => {
       const validCryptos = Object.keys(Cryptos)
-
       return transaction.value ? validCryptos.includes(transaction.value.type) : false
     })
+    const isAttachment = computed(() => transaction.value?.type === 'attachment')
 
     const cryptoTransferLabel = computed(() => {
       const direction =
@@ -128,7 +170,7 @@ export default defineComponent({
       }
 
       return store.state.options.formatMessages
-        ? formatMessage(transaction.value.message)
+        ? formatChatPreviewMessage(transaction.value.message)
         : transaction.value.message
     })
 
@@ -139,12 +181,12 @@ export default defineComponent({
 
         try {
           stateTransaction.value = await fetchTransaction(props.messageId, address.value)
-        } catch (err) {
-          if (err.errorCode) {
+        } catch (err: ValidationError | Error | unknown) {
+          if (err instanceof ValidationError) {
             errorCode.value = err.errorCode
           }
 
-          console.warn(err)
+          logger.log('QuotedMessage', 'warn', err)
         } finally {
           loading.value = false
         }
@@ -153,13 +195,16 @@ export default defineComponent({
 
     return {
       classes,
+      t,
       loading,
       transaction,
       isCryptoTransfer,
+      isAttachment,
       address,
       currencyFormatter,
       errorCode,
       ErrorCodes,
+      QUOTED_MESSAGE_LOADING_SPINNER_SIZE,
       cryptoTransferLabel,
       messageLabel
     }
@@ -168,13 +213,20 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-@import '@/assets/styles/settings/_colors.scss';
-@import '@/assets/styles/themes/adamant/_mixins.scss';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss';
 
 .quoted-message {
-  height: 32px;
-  border-radius: 8px;
-  padding: 4px 8px;
+  --a-quoted-message-height: var(--a-control-size-sm);
+  --a-quoted-message-radius: var(--a-radius-sm);
+  --a-quoted-message-padding-block: var(--a-space-1);
+  --a-quoted-message-padding-inline: var(--a-space-2);
+  --a-quoted-message-border-width: var(--a-chat-accent-border-width);
+  --a-quoted-message-error-font-style: italic;
+  height: var(--a-quoted-message-height);
+  border-radius: var(--a-quoted-message-radius);
+  padding: var(--a-quoted-message-padding-block) var(--a-quoted-message-padding-inline);
   cursor: pointer;
 
   &--non-clickable {
@@ -182,34 +234,34 @@ export default defineComponent({
   }
 
   &__message {
-    @include a-text-regular();
+    @include mixins.a-text-regular();
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   &__invalid-message {
-    font-style: italic;
+    font-style: var(--a-quoted-message-error-font-style);
   }
 
   &__message-not-found {
-    font-style: italic;
+    font-style: var(--a-quoted-message-error-font-style);
   }
 }
 
 .v-theme--light {
   .quoted-message {
-    border-left: 3px solid map-get($adm-colors, 'attention');
-    background-color: map-get($adm-colors, 'secondary2');
-    color: map-get($adm-colors, 'regular');
+    border-left: var(--a-quoted-message-border-width) solid map.get(colors.$adm-colors, 'attention');
+    background-color: map.get(colors.$adm-colors, 'secondary2');
+    color: map.get(colors.$adm-colors, 'regular');
   }
 }
 
 .v-theme--dark {
   .quoted-message {
-    border-left: 3px solid map-get($adm-colors, 'attention');
-    background-color: map-get($adm-colors, 'secondary2-slightly-transparent');
-    color: map-get($adm-colors, 'secondary');
+    border-left: var(--a-quoted-message-border-width) solid map.get(colors.$adm-colors, 'attention');
+    background-color: map.get(colors.$adm-colors, 'secondary2-slightly-transparent');
+    color: map.get(colors.$adm-colors, 'secondary');
   }
 }
 </style>

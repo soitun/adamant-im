@@ -1,5 +1,5 @@
-import { isAddress as isEthAddress, isHexStrict } from 'web3-utils'
-import { validateBase32Address as isKlyAddress } from '@klayr/cryptography'
+import { isAddress as isEthAddress, isHexStrict } from 'web3-validator'
+import process from 'process'
 import { Cryptos, CryptosInfo } from './constants'
 
 /**
@@ -18,11 +18,39 @@ export function getAddressBarURI() {
   return aip2 || document.URL
 }
 
+const formQueryParamsObject = (query) => {
+  return query.split('&').reduce((accum, param) => {
+    const [key, value = ''] = param.split('=')
+    return key && value
+      ? {
+          ...accum,
+          [key]: window.decodeURIComponent(value.includes('+') ? value.replace(/\+/g, ' ') : value)
+        }
+      : accum
+  }, {})
+}
+
+/**
+ * Parse info from an URI
+ * @param {string} uri URI. Default is address bar or argv[].
+ * @returns {
+ *   {
+ *     address: string,
+ *     crypto: string,
+ *     params: Object<string, string>,
+ *     protocol: string
+ *   }
+ * }
+ */
+export function parseURI(uri = getAddressBarURI()) {
+  return parseURIasAIP(uri)
+}
+
 /**
  * Parse info from an URI containing a cryptocurrency address
  * Complies with AIP-2, AIP-8, AIP-9
  * Sample: https://msg.adamant.im?address=U9821606738809290000&label=John+Doe&amount=1.12&message=Buy+a+beer
- * @param {string} uri URI. Default is address bar or argv[].
+ * @param {string} URI
  * @returns {
  *   {
  *     address: string,
@@ -34,24 +62,12 @@ export function getAddressBarURI() {
  */
 export function parseURIasAIP(uri = getAddressBarURI()) {
   const [origin, query = ''] = uri.split('?')
-  let address = ''
+  let address
   let crypto = ''
   let params = Object.create(null)
   let protocol = ''
 
-  if (query) {
-    params = query.split('&').reduce((accum, param) => {
-      const [key, value = ''] = param.split('=')
-      return key && value
-        ? {
-            ...accum,
-            [key]: window.decodeURIComponent(
-              value.includes('+') ? value.replace(/\+/g, ' ') : value
-            )
-          }
-        : accum
-    }, Object.create(null))
-  }
+  if (query) params = formQueryParamsObject(query)
 
   if (origin.includes(':')) {
     ;[protocol, address] = origin.split(':')
@@ -68,6 +84,8 @@ export function parseURIasAIP(uri = getAddressBarURI()) {
     address = origin
 
     for (const [symbol, { regexAddress }] of Object.entries(CryptosInfo)) {
+      // Address patterns come from the pinned adamant-wallets specification, not user input.
+      // eslint-disable-next-line security/detect-non-literal-regexp
       if (new RegExp(regexAddress).test(address)) {
         crypto = symbol
       }
@@ -75,17 +93,6 @@ export function parseURIasAIP(uri = getAddressBarURI()) {
 
     if (isHexStrict(address) && isEthAddress(address)) {
       crypto = Cryptos.ETH
-    }
-
-    if (crypto === Cryptos.KLY) {
-      // We need to use try-catch https://github.com/LiskHQ/lisk-sdk/issues/6652
-      try {
-        if (!isKlyAddress(address)) {
-          crypto = ''
-        }
-      } catch (e) {
-        crypto = ''
-      }
     }
   }
 
@@ -99,7 +106,7 @@ export function parseURIasAIP(uri = getAddressBarURI()) {
  * @param {string} name ADAMANT contact name
  * @returns {string}
  */
-export function generateURI(crypto = Cryptos.ADM, address, name) {
+export function generateURI(crypto = Cryptos.ADM, address, name = '') {
   if (crypto === Cryptos.ADM) {
     const label = name ? '&label=' + window.encodeURIComponent(name) : ''
     let hostname = window.location.origin
@@ -109,9 +116,12 @@ export function generateURI(crypto = Cryptos.ADM, address, name) {
     return `${hostname}?address=${address}${label}`
   }
 
-  const { qrPrefix } = CryptosInfo[crypto]
-  if (qrPrefix) {
-    return `${qrPrefix}:${address}`
+  // The wallet specification spells this `qqPrefix`. Reading `qrPrefix` here silently produced
+  // `undefined` for every coin, so QR codes and share links carried a bare address with no URI
+  // scheme and external wallets could not recognize them as payment URIs.
+  const { qqPrefix } = CryptosInfo[crypto]
+  if (qqPrefix) {
+    return `${qqPrefix}:${address}`
   } else {
     return address
   }

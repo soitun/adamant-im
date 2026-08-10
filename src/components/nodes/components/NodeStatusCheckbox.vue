@@ -33,29 +33,34 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use 'vuetify/settings';
 
 .node-toggle-status-checkbox {
-  font-size: 16px;
-  margin-left: 16px;
+  --a-node-toggle-checkbox-font-size: var(--a-font-size-md);
+  --a-node-toggle-checkbox-offset-inline-start: var(--a-space-4);
+  --a-node-toggle-checkbox-offset-inline-start-mobile: var(--a-space-2);
+
+  font-size: var(--a-node-toggle-checkbox-font-size);
+  margin-left: var(--a-node-toggle-checkbox-offset-inline-start);
 }
 
-@media #{map-get($display-breakpoints, 'sm-and-down')} {
+@media #{map.get(settings.$display-breakpoints, 'sm-and-down')} {
   .node-toggle-status-checkbox {
-    margin-left: 8px;
+    margin-left: var(--a-node-toggle-checkbox-offset-inline-start-mobile);
   }
 }
 
 .v-theme--light {
   .node-toggle-status-checkbox {
-    color: map-get($adm-colors, 'grey') !important;
+    color: map.get(colors.$adm-colors, 'grey');
   }
 }
 
 .v-theme--dark {
   .node-toggle-status-checkbox {
-    color: map-get($adm-colors, 'grey') !important;
+    color: map.get(colors.$adm-colors, 'grey');
   }
 }
 </style>

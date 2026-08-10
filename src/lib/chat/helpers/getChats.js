@@ -13,30 +13,32 @@ export function getChats(startHeight = 0, startOffset = 0, recursive = true) {
 
   function loadMessages(height = 0, offset = 0) {
     return admApi.getChats(height, offset, 'asc').then((result) => {
-      const { transactions } = result
+      const { transactions, nodeTimestamp } = result
       const length = transactions.length
+      const fetchedCount = result.fetchedCount ?? length
 
       // if no more messages
-      if (length <= 0) {
-        return allTransactions
+      if (fetchedCount <= 0) {
+        return { transactions: allTransactions, nodeTimestamp }
       }
 
       allTransactions = [...allTransactions, ...transactions]
 
-      // Save `height` from last message.
-      lastMessageHeight = transactions[length - 1].height
+      // Advance past hidden protocol messages as well, otherwise polling asks for them again.
+      lastMessageHeight = result.lastProcessedHeight ?? transactions[length - 1]?.height ?? 0
 
       // recursive
       if (recursive) {
-        return loadMessages(height, offset + length)
+        return loadMessages(height, offset + fetchedCount)
       } else {
-        return allTransactions
+        return { transactions: allTransactions, nodeTimestamp }
       }
     })
   }
 
-  return loadMessages(startHeight, startOffset).then((transactions) => ({
+  return loadMessages(startHeight, startOffset).then(({ transactions, nodeTimestamp }) => ({
     messages: transactions,
-    lastMessageHeight: lastMessageHeight
+    lastMessageHeight: lastMessageHeight,
+    nodeTimestamp
   }))
 }

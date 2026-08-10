@@ -1,0 +1,43 @@
+name: PWA Testnet Workflow
+
+on:
+  push:
+    branches:
+      - dev
+      - master
+
+env:
+  SURGE_TOKEN: ${{ secrets.SURGE_TOKEN }}
+  PREVIEW_DOMAIN: ${{ github.ref_name == 'master' && 'https://msg-adamant-testnet.surge.sh' || 'https://dev-adamant-testnet.surge.sh' }}
+  CUSTOM_DOMAIN: ${{ github.ref_name == 'master' && 'http://msg-testnet.adamant.im' || 'http://dev-testnet.adamant.im' }}
+
+jobs:
+  build-and-deploy-to-surge:
+    name: Build and Deploy with Testnet ADM nodes to surge
+    runs-on: ubuntu-latest
+    environment: testnet
+    steps:
+      - name: Checkout repository 🛎️
+        uses: actions/checkout@v7
+
+      - name: Setup Node version 🍀
+        uses: ./.github/actions/setup-node
+
+      - name: Install dependencies ⚙️
+        run: npm ci
+
+      - name: Build PWA 🛠️
+        run: |
+          npm run schema:generate
+          npm run build:testnet
+
+      - name: Archive artifacts 📁
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist
+
+      - name: Deploy to surge 🚀
+        run: |
+          npm install --global surge
+          surge ./dist ${{ env.PREVIEW_DOMAIN }} --token ${{ secrets.SURGE_TOKEN }}
+          surge ./dist ${{ env.CUSTOM_DOMAIN }} --token ${{ secrets.SURGE_TOKEN }}

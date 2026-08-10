@@ -69,14 +69,16 @@ export default {
 </script>
 
 <style lang="scss">
-@import 'vuetify/settings';
+@use 'sass:map';
+@use '@/assets/styles/components/_layout-primitives.scss' as layoutPrimitives;
+@use 'vuetify/settings';
 
 .icon {
   -webkit-box-align: center;
   -ms-flex-align: center;
   align-items: center;
   display: inline-flex;
-  font-size: 24px;
+  font-size: var(--a-icon-base-font-size);
   justify-content: center;
   letter-spacing: normal;
   line-height: 1;
@@ -94,24 +96,22 @@ export default {
 }
 
 .icon--box-centered {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: var(--a-icon-box-centered-size);
+  height: var(--a-icon-box-centered-size);
+  @include layoutPrimitives.a-flex-center();
 }
 
 /* Themes */
 .v-theme--light {
   .svg-icon {
-    fill: rgba(0, 0, 0, 0.54);
-    stroke: rgba(0, 0, 0, 0.54);
+    fill: var(--a-color-text-muted-light);
+    stroke: var(--a-color-text-muted-light);
   }
 }
 .v-theme--dark {
   .svg-icon {
-    fill: map-get($shades, 'white');
-    stroke: map-get($shades, 'white');
+    fill: map.get(settings.$shades, 'white');
+    stroke: map.get(settings.$shades, 'white');
   }
 }
 </style>

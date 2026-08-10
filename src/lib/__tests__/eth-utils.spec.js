@@ -3,8 +3,9 @@
 
 import { describe, it, expect } from 'vitest'
 import Web3Eth from 'web3-eth'
-
-import { toEther, toWei, getAccountFromPassphrase, increaseFee } from '@/lib/eth-utils'
+import { toEther, toWei, getAccountFromPassphrase, calculateFee } from '@/lib/eth-utils'
+import { bytesToHex } from '@/lib/hex'
+import cache from '@/store/cache'
 
 describe('eth-utils', () => {
   describe('toEther', () => {
@@ -51,19 +52,51 @@ describe('eth-utils', () => {
         privateKey: '0x344854fa2184c252bdcc09daf8fe7fbcc960aed8f4da68de793f9fbc50b5a686'
       })
     })
+
+    it('preserves the standard BIP39 seed vector without a mnemonic password', () => {
+      const bip39Vector =
+        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+
+      expect(bytesToHex(cache.mnemonicToSeedSync(bip39Vector))).toBe(
+        '5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19' +
+          'a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4'
+      )
+    })
+
+    it('derives the expected application-path key from the standard BIP39 vector', () => {
+      const bip39Vector =
+        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+
+      expect(getAccountFromPassphrase(bip39Vector, api)).toMatchObject({
+        address: '0x55a1354836b9D44F668ED5B3c66aA7Fd6a002b99',
+        privateKey: '0xeb39edc33d0a45d141154fe985a760b03ac4054239d958fa02d3c198a393574b'
+      })
+    })
   })
 
-  describe('increaseFee', () => {
-    it('should multiply `gasLimit` as a number', () => {
-      expect(increaseFee(21000, 2)).toBe(BigInt(42000))
+  describe('calculateFee', () => {
+    it('should calculate basic ETH transfer fee', () => {
+      const gasUsed = 21000
+      const gasPrice = 20000000000
+      expect(calculateFee(gasUsed, gasPrice)).toBe('0.00042')
     })
 
-    it('should multiply `gasLimit` as a bigint', () => {
-      expect(increaseFee(BigInt(21000), 2)).toBe(BigInt(42000))
+    it('should calculate ERC20 transfer fee', () => {
+      const gasUsed = 60000
+      const gasPrice = 25000000000
+      expect(calculateFee(gasUsed, gasPrice)).toBe('0.0015')
     })
 
-    it('should round the result before converting to bigint', () => {
-      expect(increaseFee(BigInt(21001), 1.5)).toBe(BigInt(31502))
+    it('should handle string inputs from API', () => {
+      const gasUsed = '35000'
+      const gasPrice = '15000000000'
+      expect(calculateFee(gasUsed, gasPrice)).toBe('0.000525')
+    })
+
+    it('should return "0" when gasPrice is missing (London hardfork case)', () => {
+      const gasUsed = 21000
+      expect(calculateFee(gasUsed, null)).toBe('0')
+      expect(calculateFee(gasUsed, undefined)).toBe('0')
     })
   })
 })

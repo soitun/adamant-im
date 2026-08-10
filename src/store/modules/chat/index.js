@@ -1,3 +1,4 @@
+import { getPublicKey } from '@/lib/adamant-api'
 import validateAddress from '@/lib/validateAddress'
 import * as admApi from '@/lib/adamant-api'
 import {
@@ -7,16 +8,43 @@ import {
   createMessage,
   createTransaction,
   createReaction,
-  normalizeMessage
+  normalizeMessage,
+  createAttachment,
+  queueSignedMessage,
+  isChatTransactionVisible
 } from '@/lib/chat/helpers'
+import { i18n } from '@/i18n'
 import { isNumeric } from '@/lib/numericHelpers'
-import { Cryptos, TransactionStatus as TS, MessageType } from '@/lib/constants'
+import {
+  CHAT_ACTUALITY_BUFFER_MS,
+  Cryptos,
+  CryptosInfo,
+  TransactionStatus as TS,
+  MessageType
+} from '@/lib/constants'
 import { isStringEqualCI } from '@/lib/textHelpers'
-import { replyMessageAsset } from '@/lib/adamant-api/asset'
-
+import { replyMessageAsset, attachmentAsset } from '@/lib/adamant-api/asset'
+import { uploadFile } from '../../../lib/files'
 import { generateAdamantChats } from './utils/generateAdamantChats'
+import {
+  AllNodesDisabledError,
+  AllNodesOfflineError,
+  isAllNodesDisabledError,
+  isAllNodesOfflineError
+} from '@/lib/nodes/utils/errors'
+import adamant from '@/lib/adamant'
+import { useConsiderOffline } from '@/hooks/useConsiderOffline.js'
+import { getConnectionAwareTimeout } from '@/lib/network/connection'
+import { logger } from '@/utils/devTools/logger'
+import { isVirtualChat } from '@/lib/chat/meta/utils'
 
 export let interval
+/**
+ * Monotonic token for chat polling lifecycle.
+ * Allows us to invalidate in-flight polling chain (Promise -> then -> setTimeout)
+ * when user logs out or polling restarts.
+ */
+let pollingSessionId = 0
 
 const SOCKET_ENABLED_TIMEOUT = 10000
 const SOCKET_DISABLED_TIMEOUT = 3000
@@ -44,7 +72,11 @@ const state = () => ({
   chats: {},
   lastMessageHeight: 0, // `height` value of the last message
   isFulfilled: false, // false - getChats did not start or in progress, true - getChats finished
-  offset: 0 // for loading chat list with pagination. -1 if all of chats loaded
+  offset: 0, // for loading chat list with pagination. -1 if all of chats loaded
+  noActiveNodesDialog: undefined, // true - visible dialog, false - hidden dialog, but shown before, undefined - not shown
+  newChats: {}, // { [partnerId]: partnerName }, for pointing if a chat needs further handling after being opened
+  chatsActualUntil: 0,
+  pendingMessages: {}
 })
 
 const getters = {
@@ -63,10 +95,28 @@ const getters = {
     const chat = state.chats[senderId]
 
     if (chat) {
-      return chat.messages.sort((left, right) => left.timestamp - right.timestamp)
+      return [...chat.messages].sort((left, right) => left.timestamp - right.timestamp)
     }
 
     return []
+  },
+
+  /**
+   * Returns the timeout for chatsActual
+   * @depends options.useSocketConnection
+   * @returns {number}
+   */
+  chatsPollingTimeout: (state, getters, rootState) => {
+    return rootState.options.useSocketConnection ? SOCKET_ENABLED_TIMEOUT : SOCKET_DISABLED_TIMEOUT
+  },
+
+  /**
+   * Returns chat actuality timeout used to hide outdated-state spinner.
+   * On potentially slow connection we increase the tolerance by x1.5.
+   * @returns {number}
+   */
+  chatsActualityTimeout: (state, getters) => {
+    return getConnectionAwareTimeout(getters.chatsPollingTimeout)
   },
 
   reactions: (state, getters) => (transactionId, partnerId) => {
@@ -89,6 +139,13 @@ const getters = {
     if (reactions.length === 0) return null
 
     return reactions[reactions.length - 1]
+  },
+
+  isLastReaction: (state, getters) => (transactionId, partnerId) => {
+    const messages = getters.messages(partnerId)
+    const index = messages.findIndex((message) => message.id === transactionId)
+
+    return index === messages.length - 1
   },
 
   /**
@@ -264,12 +321,14 @@ const getters = {
         const message = getters.lastMessage(partnerId)
 
         return {
-          timestamp: Date.now(), // give priority to new chats without messages (will be overwritten by ...message)
-          ...message,
+          lastMessage: {
+            timestamp: Date.now(), // give priority to new chats without messages (will be overwritten by ...message)
+            ...message
+          },
           contactId: partnerId
         }
       })
-      .sort((left, right) => right.timestamp - left.timestamp)
+      .sort((left, right) => right.lastMessage.timestamp - left.lastMessage.timestamp)
   },
 
   scrollPosition: (state) => (contactId) => {
@@ -300,11 +359,35 @@ const getters = {
     return (chat && chat.page) || 0
   },
 
+  hasDisabledAdmNodes: (state, getters, rootState, rootGetters) => {
+    const admNodes = rootGetters['nodes/adm']
+
+    return admNodes.some((node) => node.status === 'disabled')
+  },
+
+  isNoNodesDialogAllowed: (state, getters, rootState) => (err) => {
+    const isOnline = rootState.isOnline
+
+    return (
+      isOnline &&
+      getters.hasDisabledAdmNodes &&
+      (isAllNodesOfflineError(err) || isAllNodesDisabledError(err))
+    )
+  },
+
   /**
    * Offset for chat list
    */
   chatListOffset: (state) => {
     return state.offset
+  },
+
+  isNewChat: (state) => (partnerId) => {
+    return partnerId in state.newChats
+  },
+
+  getPartnerName: (state) => (partnerId) => {
+    return state.newChats[partnerId]
   }
 }
 
@@ -344,6 +427,10 @@ const mutations = {
     state.isFulfilled = value
   },
 
+  setChatsActualUntil(state, value) {
+    state.chatsActualUntil = value
+  },
+
   /**
    * Create empty chat.
    * @param {string} partnerId
@@ -357,6 +444,14 @@ const mutations = {
     }
 
     state.chats[partnerId] = createChat()
+  },
+
+  addNewChat(state, { partnerId, partnerName }) {
+    state.newChats[partnerId] = partnerName
+  },
+
+  removeNewChat(state, partnerId) {
+    delete state.newChats[partnerId]
   },
 
   /**
@@ -449,7 +544,7 @@ const mutations = {
    * @param {string} realId Real id (from server)
    * @param {string} status Message status
    */
-  updateMessage(state, { partnerId, id, realId, status }) {
+  updateMessage(state, { partnerId, id, realId, status, asset }) {
     const chat = state.chats[partnerId]
 
     if (chat) {
@@ -462,7 +557,43 @@ const mutations = {
         if (status) {
           message.status = status
         }
+        if (asset) {
+          message.asset = asset
+        }
       }
+    }
+  },
+
+  updateCryptoTransferMessage(
+    state,
+    { partnerId, hash, status, confirmations, instantlock, instantlock_internal, instantsend }
+  ) {
+    const chat = state.chats[partnerId]
+
+    if (!chat || !hash) {
+      return
+    }
+
+    const message = chat.messages.find((message) => message.hash === hash || message.id === hash)
+
+    if (!message) {
+      return
+    }
+
+    if (status) {
+      message.status = status
+    }
+    if (typeof confirmations === 'number') {
+      message.confirmations = confirmations
+    }
+    if (typeof instantlock === 'boolean') {
+      message.instantlock = instantlock
+    }
+    if (typeof instantlock_internal === 'boolean') {
+      message.instantlock_internal = instantlock_internal
+    }
+    if (typeof instantsend === 'boolean') {
+      message.instantsend = instantsend
     }
   },
 
@@ -485,10 +616,45 @@ const mutations = {
     }
   },
 
+  setNoActiveNodesDialog(state, { value, afterSendingMessage = false }) {
+    if (state.noActiveNodesDialog === false && !afterSendingMessage) {
+      return // do not show dialog again
+    }
+
+    state.noActiveNodesDialog = value
+  },
+
+  addPendingMessage(state, { messageId, recipientId, timeout, type, files, cids }) {
+    state.pendingMessages[messageId] = {
+      recipientId,
+      timeout,
+      type,
+      files,
+      cids
+    }
+  },
+
+  deletePendingMessage(state, messageId) {
+    if (state.pendingMessages[messageId]) {
+      clearTimeout(state.pendingMessages[messageId].timeout)
+      delete state.pendingMessages[messageId]
+    }
+  },
+
+  updatePendingMessage(state, { messageId, cids }) {
+    if (state.pendingMessages[messageId]) {
+      state.pendingMessages[messageId].cids = cids
+    }
+  },
+
   reset(state) {
     state.chats = {}
     state.lastMessageHeight = 0
     state.isFulfilled = false
+    state.offset = 0
+    state.noActiveNodesDialog = undefined
+    state.newChats = {}
+    state.chatsActualUntil = 0
   }
 }
 
@@ -501,21 +667,32 @@ const actions = {
    *
    * @returns {Promise}
    */
-  loadChats({ commit, dispatch, rootState }, { perPage = 25 } = {}) {
+  loadChats({ commit, dispatch, rootState, getters }, { perPage = 25 } = {}) {
     commit('setFulfilled', false)
 
-    return admApi.getChatRooms(rootState.address).then((result) => {
-      const { messages, lastMessageHeight } = result
+    return admApi
+      .getChatRooms(rootState.address, { limit: perPage })
+      .then((result) => {
+        const { messages, lastMessageHeight, fetchedCount = 0 } = result
 
-      dispatch('pushMessages', messages)
+        dispatch('pushMessages', messages)
 
-      if (lastMessageHeight > 0) {
-        commit('setHeight', lastMessageHeight)
-        commit('setOffset', perPage)
-      }
+        if (lastMessageHeight > 0) {
+          commit('setHeight', lastMessageHeight)
+        }
 
-      commit('setFulfilled', true)
-    })
+        if (fetchedCount > 0) {
+          commit('setOffset', fetchedCount)
+        }
+
+        commit('setFulfilled', true)
+      })
+      .catch((err) => {
+        if (getters.isNoNodesDialogAllowed(err)) {
+          commit('setNoActiveNodesDialog', { value: true })
+          setTimeout(() => dispatch('loadChats'), 5000) // retry in 5 seconds
+        }
+      })
   },
 
   loadChatsPaged({ commit, dispatch, rootState, state }, { perPage = 25 } = {}) {
@@ -527,13 +704,13 @@ const actions = {
 
     return admApi
       .getChatRooms(rootState.address, { offset, limit: perPage })
-      .then(({ messages }) => {
+      .then(({ messages, fetchedCount = 0 }) => {
         dispatch('pushMessages', messages)
 
-        if (messages.length <= 0) {
+        if (fetchedCount <= 0) {
           commit('setOffset', -1)
         } else {
-          commit('setOffset', offset + perPage)
+          commit('setOffset', offset + fetchedCount)
         }
       })
   },
@@ -546,6 +723,11 @@ const actions = {
    * @returns {Promise}
    */
   getChatRoomMessages({ rootState, dispatch, commit, getters }, { contactId, perPage = 25 } = {}) {
+    if (isVirtualChat(contactId)) {
+      commit('setChatOffset', { contactId, offset: -1 })
+      return Promise.resolve()
+    }
+
     let offset = getters.chatOffset(contactId)
     let page = getters.chatPage(contactId)
 
@@ -567,6 +749,12 @@ const actions = {
           commit('setChatPage', { contactId, page: ++page })
         }
       })
+      .catch((err) => {
+        if (getters.isNoNodesDialogAllowed(err)) {
+          commit('setNoActiveNodesDialog', { value: true })
+        }
+        throw err
+      })
   },
 
   /**
@@ -574,18 +762,22 @@ const actions = {
    * @param {Message[]} messages Array of messages
    */
   pushMessages({ commit, rootState, dispatch }, messages) {
-    const normalizedMessages = messages.map(normalizeMessage)
+    const normalizedMessages = messages.filter(isChatTransactionVisible).map(normalizeMessage)
     dispatch('botCommands/reInitCommands', normalizedMessages, { root: true })
     normalizedMessages.forEach((message) => {
-      commit('pushMessage', {
-        message: message,
-        userId: rootState.address
-      })
+      const { recipientId, senderId } = message
+
+      if (recipientId === rootState.address || senderId === rootState.address) {
+        commit('pushMessage', {
+          message: message,
+          userId: rootState.address
+        })
+      }
     })
   },
 
   unshiftMessages({ commit, rootState, dispatch }, messages) {
-    const normalizedMessages = messages.map(normalizeMessage)
+    const normalizedMessages = messages.filter(isChatTransactionVisible).map(normalizeMessage)
     dispatch('botCommands/reInitCommands', normalizedMessages, { root: true })
     normalizedMessages.forEach((message) => {
       commit('pushMessage', {
@@ -602,15 +794,21 @@ const actions = {
    * This is a temporary solution until the sockets are implemented.
    * @returns {Promise}
    */
-  getNewMessages({ state, commit, dispatch }) {
+  getNewMessages({ getters, state, commit, dispatch }) {
     if (!state.isFulfilled) {
       return Promise.reject(new Error('Chat is not fulfilled'))
     }
 
     return getChats(state.lastMessageHeight).then((result) => {
-      const { messages, lastMessageHeight } = result
+      const { messages, lastMessageHeight, nodeTimestamp } = result
+      const chatsActualInterval = getters.chatsActualityTimeout
 
       dispatch('pushMessages', messages)
+
+      const validUntil =
+        adamant.toTimestamp(nodeTimestamp) + chatsActualInterval + CHAT_ACTUALITY_BUFFER_MS
+
+      commit('setChatsActualUntil', validUntil)
 
       if (lastMessageHeight > 0) {
         commit('setHeight', lastMessageHeight)
@@ -657,6 +855,7 @@ const actions = {
         }
 
         commit('createEmptyChat', partnerId)
+        commit('removeNewChat', partnerId)
 
         return key
       })
@@ -671,11 +870,119 @@ const actions = {
    * @param {string} replyToId Optional
    * @returns {Promise}
    */
-  sendMessage({ commit, rootState }, { message, recipientId, replyToId }) {
-    const messageObject = createMessage({
+  async sendMessage({ commit, rootState, dispatch, getters }, { message, recipientId, replyToId }) {
+    let id
+    try {
+      const type = replyToId
+        ? MessageType.RICH_CONTENT_MESSAGE
+        : MessageType.BASIC_ENCRYPTED_MESSAGE
+
+      const messageAsset = replyToId
+        ? replyMessageAsset({
+            replyToId,
+            replyMessage: message
+          })
+        : message
+
+      const signedTransaction = admApi.signChatMessageTransaction({
+        to: recipientId,
+        message: messageAsset,
+        type
+      })
+
+      id = adamant.getTransactionId(signedTransaction)
+
+      const messageObject = createMessage({
+        id,
+        message,
+        recipientId,
+        senderId: rootState.address,
+        replyToId
+      })
+
+      commit('pushMessage', {
+        message: messageObject,
+        userId: rootState.address
+      })
+
+      const transaction = await queueSignedMessage(signedTransaction)
+
+      if (!transaction.success) {
+        throw new Error(i18n.global.t('chats.message_rejected'))
+      }
+
+      commit('updateMessage', {
+        id,
+        status: TS.REGISTERED,
+        partnerId: recipientId
+      })
+    } catch (error) {
+      if (isAllNodesOfflineError(error)) {
+        // if the error is caused by connection we keep the message in PENDING status
+        // and try to resend it after the connection is restored
+
+        // timeout for self deleting out of pending messages
+        const timeout = setTimeout(() => {
+          dispatch('rejectPendingMessage', {
+            messageId: id,
+            recipientId
+          })
+        }, Number(CryptosInfo.ADM.timeout.message))
+
+        // put the message into pending messages object
+        commit('addPendingMessage', {
+          messageId: id,
+          type: MessageType.BASIC_ENCRYPTED_MESSAGE,
+          recipientId,
+          timeout
+        })
+
+        commit('updateMessage', {
+          id,
+          status: TS.PENDING,
+          partnerId: recipientId
+        })
+      } else {
+        if (getters.isNoNodesDialogAllowed(error)) {
+          commit('setNoActiveNodesDialog', { value: true, afterSendingMessage: true })
+        }
+
+        if (id) {
+          commit('updateMessage', {
+            id,
+            status: TS.REJECTED,
+            partnerId: recipientId
+          })
+        }
+      }
+      throw error
+    }
+  },
+
+  /**
+   * Send files to the chat.
+   * After confirmation, `id` and `status` will be updated.
+   *
+   * @param {string} message
+   * @param {string} recipientId
+   * @param {FileData[]} files
+   * @param {string} replyToId Optional
+   * @returns {Promise}
+   */
+  async sendAttachment(
+    { commit, rootState, dispatch, rootGetters, getters },
+    { files, message, recipientId, replyToId }
+  ) {
+    const recipientPublicKey = await getPublicKey(recipientId)
+    const senderPublicKey = await getPublicKey(rootState.address)
+
+    let messageObject = createAttachment({
       message,
       recipientId,
       senderId: rootState.address,
+      recipientPublicKey,
+      senderPublicKey,
+      files,
       replyToId
     })
 
@@ -684,19 +991,78 @@ const actions = {
       userId: rootState.address
     })
 
-    const type = replyToId ? MessageType.RICH_CONTENT_MESSAGE : MessageType.BASIC_ENCRYPTED_MESSAGE
-    const messageAsset = replyToId
-      ? replyMessageAsset({
-          replyToId,
-          replyMessage: message
-        })
-      : message
+    const cids = files.map((file) => [file.cid, file.preview?.cid]).filter((cid) => !!cid)
+    let newAsset = replyToId
+      ? { replyto_id: replyToId, reply_message: attachmentAsset(files, message) }
+      : attachmentAsset(files, message)
+    commit('updateMessage', {
+      id: messageObject.id,
+      partnerId: recipientId,
+      asset: newAsset
+    })
 
-    return queueMessage(messageAsset, recipientId, type)
+    const areAdmNodesDisabled = rootGetters['nodes/adm'].every((node) => node.status === 'disabled')
+
+    if (areAdmNodesDisabled) {
+      throw new AllNodesDisabledError('adm')
+    }
+
+    cids.forEach(([cid]) => {
+      commit('attachment/setUploadProgress', { cid, progress: 0 }, { root: true })
+    })
+
+    const uploadData = await dispatch('uploadConsistently', {
+      files,
+      cids
+    })
+
+    // Heisenbug: After uploading an MP4 file, the CID returned by the IPFS node differs from the locally computed one.
+    // So we update the CIDs one more time, just to be sure.
+    newAsset = replyToId
+      ? {
+          replyto_id: replyToId,
+          reply_message: attachmentAsset(files, message, uploadData.newCids)
+        }
+      : attachmentAsset(files, message, uploadData.newCids)
+
+    commit('updateMessage', {
+      id: messageObject.id,
+      partnerId: recipientId,
+      asset: newAsset
+    })
+
+    if (uploadData.error) {
+      if (!isAllNodesOfflineError(uploadData.error)) {
+        if (getters.isNoNodesDialogAllowed(uploadData.error)) {
+          commit('setNoActiveNodesDialog', { value: true, afterSendingMessage: true })
+        }
+
+        commit('updateMessage', {
+          id: messageObject.id,
+          status: TS.REJECTED,
+          partnerId: recipientId
+        })
+
+        for (const [cid] of cids) {
+          commit('attachment/resetUploadProgress', { cid }, { root: true })
+        }
+
+        throw uploadData.error
+      }
+    }
+
+    return queueMessage(newAsset, recipientId, MessageType.RICH_CONTENT_MESSAGE)
       .then((res) => {
-        // @todo this check must be performed on the server
+        if (isAllNodesOfflineError(res)) {
+          throw new AllNodesOfflineError('adm')
+        }
+
+        if (isAllNodesDisabledError(res)) {
+          throw new AllNodesDisabledError('adm')
+        }
+
         if (!res.success) {
-          throw new Error('Message rejected')
+          throw new Error(i18n.global.t('chats.message_rejected'))
         }
 
         // update `message.status` to 'REGISTERED'
@@ -711,12 +1077,45 @@ const actions = {
         return res
       })
       .catch((err) => {
-        // update `message.status` to 'REJECTED'
-        commit('updateMessage', {
-          id: messageObject.id,
-          status: TS.REJECTED,
-          partnerId: recipientId
-        })
+        // update `message.status` to 'REJECTED' if the error is not caused by connection
+        if (!isAllNodesOfflineError(err)) {
+          if (getters.isNoNodesDialogAllowed(err)) {
+            commit('setNoActiveNodesDialog', { value: true, afterSendingMessage: true })
+          }
+
+          commit('updateMessage', {
+            id: messageObject.id,
+            status: TS.REJECTED,
+            partnerId: recipientId
+          })
+        } else {
+          // if the error is caused by connection we keep the message in PENDING status
+          // and try to resend it after the connection is restored
+
+          // timeout for self deleting out of pending messages
+          const timeout = setTimeout(() => {
+            dispatch('rejectPendingMessage', {
+              messageId: messageObject.id,
+              recipientId
+            })
+          }, Number(CryptosInfo.ADM.timeout.attachment))
+
+          // put the message into pending messages object
+          commit('addPendingMessage', {
+            messageId: messageObject.id,
+            type: MessageType.RICH_CONTENT_MESSAGE,
+            cids: uploadData.newCids,
+            recipientId,
+            timeout,
+            files
+          })
+
+          commit('updateMessage', {
+            id: messageObject.id,
+            status: TS.PENDING,
+            partnerId: recipientId
+          })
+        }
 
         throw err // call the error again so that it can be processed inside view
       })
@@ -728,7 +1127,7 @@ const actions = {
    * @param {number} id Message Id
    * @returns {Promise}
    */
-  resendMessage({ getters, commit }, { recipientId, messageId }) {
+  resendMessage({ getters, commit, dispatch }, { recipientId, messageId }) {
     const message = getters.partnerMessageById(recipientId, messageId)
 
     // update message status from `rejected` to `sent`
@@ -753,30 +1152,194 @@ const actions = {
       return queueMessage(messageAsset, recipientId, type)
         .then((res) => {
           if (!res.success) {
-            throw new Error('Message rejected')
+            throw new Error(i18n.global.t('chats.message_rejected'))
           }
 
-          commit('updateMessage', {
-            id: messageId,
-            realId: res.transactionId,
-            status: TS.REGISTERED,
-            partnerId: recipientId
+          dispatch('registerPendingMessage', {
+            transactionId: res.transactionId,
+            messageId,
+            recipientId
           })
 
           return res
         })
-        .catch((err) => {
-          commit('updateMessage', {
-            id: messageId,
-            status: TS.REJECTED,
-            partnerId: recipientId
-          })
+        .catch((error) => {
+          if (!isAllNodesOfflineError(error)) {
+            dispatch('rejectPendingMessage', {
+              messageId,
+              recipientId
+            })
+          }
 
-          throw err
+          throw error
         })
     }
 
     return Promise.reject(new Error('Message not found in history'))
+  },
+
+  /**
+   * Resend attachment, in case the connection fails at upload or at send.
+   * @param {string} recipientId
+   * @param {number} messageId
+   * @param {FileData[]} files
+   * @param {cids} cids (in case some files were successfully uploaded and their cids changed)
+   * @returns {Promise}
+   */
+  async resendAttachment({ getters, commit, dispatch }, { recipientId, messageId, files, cids }) {
+    const message = getters.partnerMessageById(recipientId, messageId)
+    if (!message) {
+      return Promise.reject(new Error('Message not found in history'))
+    }
+
+    commit('updateMessage', {
+      id: messageId,
+      status: TS.PENDING,
+      partnerId: recipientId
+    })
+
+    let uploadData
+
+    try {
+      uploadData = await dispatch('uploadConsistently', {
+        files,
+        cids
+      })
+
+      if (uploadData.error) {
+        throw uploadData.error
+      }
+    } catch (err) {
+      if (!isAllNodesOfflineError(err)) {
+        dispatch('rejectPendingMessage', {
+          messageId,
+          recipientId
+        })
+
+        throw err
+      }
+    }
+
+    const newAsset = message.isReply
+      ? {
+          replyto_id: message.asset.replyto_id,
+          reply_message: attachmentAsset(files, message.message, uploadData.newCids)
+        }
+      : attachmentAsset(files, message.message, uploadData.newCids)
+
+    commit('updateMessage', {
+      id: messageId,
+      asset: newAsset,
+      partnerId: recipientId
+    })
+
+    commit('updatePendingMessage', {
+      cids: uploadData.newCids,
+      messageId
+    })
+
+    return queueMessage(newAsset, recipientId, MessageType.RICH_CONTENT_MESSAGE)
+      .then((res) => {
+        if (!res.success) {
+          throw new Error(i18n.global.t('chats.message_rejected'))
+        }
+        dispatch('registerPendingMessage', {
+          transactionId: res.transactionId,
+          messageId,
+          recipientId
+        })
+        return res
+      })
+      .catch((err) => {
+        if (!isAllNodesOfflineError(err)) {
+          dispatch('rejectPendingMessage', {
+            messageId,
+            recipientId
+          })
+        }
+
+        throw err
+      })
+  },
+
+  async uploadConsistently({ commit, rootGetters }, { files, cids }) {
+    const { subscribeOffline } = useConsiderOffline({ getters: rootGetters })
+
+    const getProgress = (cid) => rootGetters['attachment/getUploadProgress'](cid)
+
+    const setUploadProgress = (cid, progress) => {
+      commit('attachment/setUploadProgress', { cid, progress }, { root: true })
+    }
+
+    const fileByCid = files.reduce((acc, file) => {
+      acc[file.cid] = file
+      return acc
+    }, {})
+
+    const uploaded = []
+
+    for (const [cid, previewCid] of cids) {
+      if (getProgress(cid) === 100) {
+        uploaded.push([cid, previewCid])
+        continue
+      }
+
+      setUploadProgress(cid, 0)
+
+      const controller = new AbortController()
+      const unsubscribe = subscribeOffline(() => {
+        controller.abort()
+      })
+
+      try {
+        const { cids: newCids } = await uploadFile(
+          fileByCid[cid],
+          (progress) => setUploadProgress(cid, progress),
+          controller.signal
+        )
+
+        commit('attachment/resetUploadProgress', { cid }, { root: true })
+        uploaded.push(newCids)
+      } catch (error) {
+        setUploadProgress(cid, 0)
+
+        const fallback = uploaded.concat(cids.slice(uploaded.length))
+        const errorToThrow =
+          controller.signal.aborted || isAllNodesOfflineError(error)
+            ? new AllNodesOfflineError('adm')
+            : error
+
+        return {
+          newCids: fallback,
+          error: errorToThrow
+        }
+      } finally {
+        unsubscribe()
+      }
+    }
+
+    return { newCids: uploaded }
+  },
+
+  registerPendingMessage({ commit }, { messageId, recipientId, transactionId }) {
+    commit('updateMessage', {
+      id: messageId,
+      realId: transactionId,
+      status: TS.REGISTERED,
+      partnerId: recipientId
+    })
+
+    commit('deletePendingMessage', messageId)
+  },
+
+  rejectPendingMessage({ commit }, { messageId, recipientId }) {
+    commit('updateMessage', {
+      id: messageId,
+      status: TS.REJECTED,
+      partnerId: recipientId
+    })
+
+    commit('deletePendingMessage', messageId)
   },
 
   /**
@@ -806,7 +1369,7 @@ const actions = {
       .then((res) => {
         // @todo this check must be performed on the server
         if (!res.success) {
-          throw new Error('Message rejected')
+          throw new Error(i18n.global.t('chats.message_rejected'))
         }
 
         // update `message.status` to 'REGISTERED'
@@ -884,14 +1447,25 @@ const actions = {
 
   startInterval: {
     root: true,
-    handler({ dispatch, rootState }) {
+    handler({ dispatch, getters }) {
+      // Start a new polling session and cancel the previously scheduled tick.
+      const currentSessionId = ++pollingSessionId
+      clearTimeout(interval)
+
       function repeat() {
+        // Polling has been stopped/restarted, ignore stale loop.
+        if (currentSessionId !== pollingSessionId) return
+
         dispatch('getNewMessages')
-          .catch((err) => console.error(err))
+          .catch((err) => {
+            // Skip stale async completion after stop/logout.
+            if (currentSessionId !== pollingSessionId) return
+            logger.log('chat', 'warn', err)
+          })
           .then(() => {
-            const timeout = rootState.options.useSocketConnection
-              ? SOCKET_ENABLED_TIMEOUT
-              : SOCKET_DISABLED_TIMEOUT
+            // Do not schedule next timeout for stale session.
+            if (currentSessionId !== pollingSessionId) return
+            const timeout = getters.chatsPollingTimeout
             interval = setTimeout(repeat, timeout)
           })
       }
@@ -903,6 +1477,8 @@ const actions = {
   stopInterval: {
     root: true,
     handler() {
+      // Invalidate current session so in-flight promise chain cannot re-schedule polling.
+      pollingSessionId++
       clearTimeout(interval)
     }
   },

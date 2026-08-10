@@ -1,51 +1,75 @@
+import { AxiosInstance, AxiosRequestConfig } from 'axios'
 import { createBtcLikeClient } from '../utils/createBtcLikeClient'
-import type { AxiosInstance } from 'axios'
 import { Node } from '@/lib/nodes/abstract.node'
 import { NODE_LABELS } from '@/lib/nodes/constants'
-import { formatBtcVersion } from '@/lib/nodes/utils/nodeVersionFormatters.ts'
-
-type FetchBtcNodeInfoResult = {
-  error: string
-  result: {
-    version: number
-  }
-}
+import { formatBtcVersion } from '@/lib/nodes/utils/nodeVersionFormatters'
+import type { NodeInfo } from '@/types/wallets'
+import { RpcRequest, RpcResponse } from './types/api/common'
+import { NetworkInfo } from './types/api/network-info'
+import { BlockchainInfo } from './types/api/blockchain-info'
+import { logger } from '@/utils/devTools/logger'
 
 /**
  * Encapsulates a node. Provides methods to send API-requests
  * to the node and verify is status (online/offline, version, ping, etc.)
  */
 export class BtcNode extends Node<AxiosInstance> {
-  constructor(url: string) {
-    super(url, 'btc', 'node', NODE_LABELS.BtcNode)
+  constructor(endpoint: NodeInfo) {
+    super(endpoint, 'btc', 'node', NODE_LABELS.BtcNode)
   }
 
   protected buildClient(): AxiosInstance {
-    return createBtcLikeClient(this.url)
+    return createBtcLikeClient(this.url, this.healthcheckRequestTimeoutMs)
   }
 
   protected async checkHealth() {
     const time = Date.now()
-    const blockNumber = await this.client.get('/blocks/tip/height').then((res) => {
-      return Number(res.data) || 0
+
+    const { blocks } = await this.invoke<BlockchainInfo>({
+      method: 'getblockchaininfo'
     })
 
     return {
-      height: Number(blockNumber),
+      height: Number(blocks),
       ping: Date.now() - time
     }
   }
 
   protected async fetchNodeVersion(): Promise<void> {
-    const { data } = await this.client.post<FetchBtcNodeInfoResult>('/bitcoind', {
-      jsonrpc: '1.0',
-      id: 'adm',
-      method: 'getnetworkinfo',
-      params: []
-    })
-    const { version } = data.result
-    if (version) {
-      this.version = formatBtcVersion(version)
+    try {
+      const { version } = await this.invoke<NetworkInfo>({
+        method: 'getnetworkinfo'
+      })
+
+      if (version) {
+        this.version = formatBtcVersion(version)
+      }
+    } catch (e) {
+      logger.log('btc-node', 'warn', e)
     }
+  }
+
+  /**
+   * Performs an RPC request to the Bitcoin node.
+   */
+  async invoke<Result = any, Params extends RpcRequest = RpcRequest>(
+    params?: Params,
+    requestConfig?: AxiosRequestConfig
+  ): Promise<Result> {
+    const baseURL = this.getBaseURL(this)
+
+    return this.client
+      .request<RpcResponse<Result>>({
+        ...requestConfig,
+        baseURL,
+        method: 'POST',
+        data: params
+      })
+      .then((res) => res.data)
+      .then(({ result, error }) => {
+        if (error) throw new Error(error.message)
+
+        return result
+      })
   }
 }

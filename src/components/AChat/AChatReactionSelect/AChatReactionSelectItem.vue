@@ -47,18 +47,19 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
 
 .a-chat-reaction-select-item {
-  width: 36px;
-  height: 36px;
+  width: calc(var(--a-space-4) + var(--a-space-5));
+  height: calc(var(--a-space-4) + var(--a-space-5));
   border-radius: 50%;
   background-color: transparent;
   cursor: pointer;
   transition: background-color 50ms ease-out 100ms;
 
   &__emoji {
-    font-size: 24px;
+    font-size: var(--a-space-6);
     text-align: center;
     border-radius: inherit;
   }
@@ -67,11 +68,11 @@ export default defineComponent({
 .v-theme--light {
   .a-chat-reaction-select-item {
     &:hover {
-      background-color: map-get($adm-colors, 'secondary2');
+      background-color: map.get(colors.$adm-colors, 'secondary2');
     }
 
     &--selected {
-      background-color: map-get($adm-colors, 'secondary2');
+      background-color: map.get(colors.$adm-colors, 'secondary2');
     }
   }
 }
@@ -79,11 +80,11 @@ export default defineComponent({
 .v-theme--dark {
   .a-chat-reaction-select-item {
     &:hover {
-      background-color: map-get($adm-colors, 'secondary2-transparent');
+      background-color: map.get(colors.$adm-colors, 'secondary2-transparent');
     }
 
     &--selected {
-      background-color: map-get($adm-colors, 'secondary2-slightly-transparent');
+      background-color: map.get(colors.$adm-colors, 'secondary2-slightly-transparent');
     }
   }
 }

@@ -1,5 +1,6 @@
 /* eslint-disable */
 /* tslint:disable */
+// @ts-nocheck
 /*
  * ---------------------------------------------------------------
  * ## THIS FILE WAS GENERATED VIA SWAGGER-TYPESCRIPT-API        ##
@@ -26,6 +27,26 @@ export interface NodeHealthcheck {
   threshold: number
 }
 
+export interface ProjectLink {
+  name: string
+  url: string
+}
+
+export interface Service {
+  /** Service node description */
+  description: ServiceDescription
+  list: NodeInfo[]
+  healthCheck: ServiceHealthcheck
+  displayName: string
+}
+
+/** Service node description */
+export interface ServiceDescription {
+  software: string
+  github?: string
+  docs?: string
+}
+
 export interface ServiceHealthcheck {
   /** Regular node status update interval in ms */
   normalUpdateInterval: number
@@ -33,16 +54,16 @@ export interface ServiceHealthcheck {
   crucialUpdateInterval: number
   /** On the node screen, the status update interval in ms */
   onScreenUpdateInterval: number
+  /** Permissible height difference between nodes or indexed services */
+  threshold?: number
 }
 
-export interface ProjectLink {
-  name: string
-  url: string
-}
-
-export interface Service {
-  url: string
-  alt_ip?: string
+/** Timeouts when sending messages in chat. See [README.md](https://github.com/Adamant-im/adamant-wallets/blob/master/README.md#message-sending) for details. */
+export interface MessageTimeout {
+  /** Timeout for regular messages (in milliseconds) */
+  message: number
+  /** Timeout for file transfers (in milliseconds) */
+  attachment: number
 }
 
 export interface TokenGeneral {
@@ -68,8 +89,8 @@ export interface TokenGeneral {
   research?: string
   /** Coin ticker */
   symbol: string
-  /** Coin or token mainly */
-  type: 'coin' | 'ERC20'
+  /** Asset type */
+  type: 'coin' | 'token'
   /** Decimal places */
   decimals: number
   /** Max precision for tx */
@@ -98,6 +119,24 @@ export interface TokenGeneral {
   blockTimeFixed?: number
   /** Average block time in ms */
   blockTimeAvg?: number
+  /** Balance checking interval in ms */
+  balanceCheckInterval?: number
+  /** Balance checking interval in ms for newly created accounts */
+  balanceCheckIntervalNewAccount?: number
+  /** Balance validation interval in ms */
+  balanceValidInterval?: number
+  /** Fallback gas limit for Ethereum-like transfers */
+  defaultGasLimit?: number
+  /** Fallback gas price in Gwei for Ethereum-like transfers */
+  defaultGasPriceGwei?: number
+  /** Gas price in Gwei above which apps may show a warning */
+  warningGasPriceGwei?: number
+  /** Gas limit multiplier percent used to improve transfer reliability */
+  reliabilityGasLimitPercent?: number
+  /** Gas price multiplier percent used to improve transfer reliability */
+  reliabilityGasPricePercent?: number
+  /** Gas price or network fee multiplier percent for the Increase fee option */
+  increasedGasPricePercent?: number
   txFetchInfo?: {
     /** Interval between fetching Tx in ms when its current status is "Pending" for new transactions */
     newPendingInterval?: number
@@ -110,30 +149,56 @@ export interface TokenGeneral {
     /** Attempts to fetch Tx when its current status is "Pending" for old transactions */
     oldPendingAttempts?: number
   }
+  /** Timeouts when sending messages in chat. See [README.md](https://github.com/Adamant-im/adamant-wallets/blob/master/README.md#message-sending) for details. */
+  timeout?: MessageTimeout
   /** Time in ms when difference between in-chat transfer and Tx timestamp considered as acceptable */
   txConsistencyMaxTime?: number
   nodes?: {
     /** Node links for API */
     list: NodeInfo[]
     healthCheck: NodeHealthcheck
+    displayName: string
     /**
      * Minimal node API version
      * @example "0.8.0"
      */
     minVersion?: string
-  }
-  services?: {
-    /** Service node links for API */
-    list: Record<string, Service>
-    healthCheck: ServiceHealthcheck
     /**
-     * Minimal service node API version
-     * @example "1.0.0"
+     * A time correction for the message transactions on ADM
+     * @example 500
      */
-    minVersion?: string
+    nodeTimeCorrection?: number
   }
+  services?: Record<string, Service>
   /** Additional project links */
   links?: ProjectLink[]
+  testnet?: {
+    /** Project website URL */
+    website?: string
+    /** Explorer URL */
+    explorer?: string
+    /** URL to get tx info */
+    explorerTx?: string
+    /** URL to get address info */
+    explorerAddress?: string
+    nodes?: {
+      /** Node links for API */
+      list: NodeInfo[]
+      healthCheck: NodeHealthcheck
+      displayName: string
+      /**
+       * Minimal node API version
+       * @example "0.8.0"
+       */
+      minVersion?: string
+      /**
+       * A time correction for the message transactions on ADM
+       * @example 500
+       */
+      nodeTimeCorrection?: number
+    }
+    services?: Record<string, Service>
+  }
   tor?: {
     /** Project website URL (Tor) */
     website?: string
@@ -147,22 +212,19 @@ export interface TokenGeneral {
       /** Node links for API */
       list: NodeInfo[]
       healthCheck: NodeHealthcheck
+      displayName: string
       /**
        * Minimal node API version
        * @example "0.8.0"
        */
       minVersion?: string
-    }
-    services?: {
-      /** Service node links for API */
-      list: Record<string, Service>
-      healthCheck?: ServiceHealthcheck
       /**
-       * Minimal service node API version
-       * @example "1.0.0"
+       * A time correction for the message transactions on ADM
+       * @example 500
        */
-      minVersion?: string
+      nodeTimeCorrection?: number
     }
+    services?: Record<string, Service>
     /** Additional project links (Tor) */
     links?: ProjectLink[]
   }
@@ -181,6 +243,8 @@ export interface TokenAsset {
   defaultVisibility?: boolean
   /** Default ordinal number in a wallet list. Coins with the same ordinal number are sorted alphabetically. Coins without an order are shown last, alphabetically */
   defaultOrdinalLevel?: number
+  /** Max precision for tx */
+  cryptoTransferDecimals?: number
   /** Decimal places */
   decimals: number
 }
@@ -194,5 +258,14 @@ export interface Blockchain {
   mainCoin: string
   /** Coin to pay fees in */
   fees: string
+  /** Fallback gas limit for Ethereum-like transfers */
   defaultGasLimit?: number
+  /** Fallback gas price in Gwei for Ethereum-like transfers */
+  defaultGasPriceGwei?: number
+  /** Gas limit multiplier percent used to improve transfer reliability */
+  reliabilityGasLimitPercent?: number
+  /** Gas price multiplier percent used to improve transfer reliability */
+  reliabilityGasPricePercent?: number
+  /** Gas price or network fee multiplier percent for the Increase fee option */
+  increasedGasPricePercent?: number
 }

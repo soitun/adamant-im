@@ -1,5 +1,9 @@
 import * as bitcoin from 'bitcoinjs-lib'
-import BigNumber from '@/lib/bignumber'
+import { BigNumber } from '@/lib/bignumber'
+
+const toRoundedDownIntegerString = (amount, multiplier) => {
+  return new BigNumber(amount).times(multiplier).decimalPlaces(0, BigNumber.ROUND_DOWN).toFixed(0)
+}
 
 /**
  * Checks if the supplied string is a valid BTC address
@@ -9,7 +13,7 @@ import BigNumber from '@/lib/bignumber'
 export function isValidAddress(address) {
   try {
     bitcoin.address.toOutputScript(address)
-  } catch (e) {
+  } catch {
     return false
   }
 
@@ -17,5 +21,9 @@ export function isValidAddress(address) {
 }
 
 export function convertToSmallestUnit(amount, multiplier) {
-  return Math.floor(new BigNumber(amount).times(multiplier).toNumber())
+  return Number(toRoundedDownIntegerString(amount, multiplier))
+}
+
+export function convertToBigIntSmallestUnit(amount, multiplier) {
+  return BigInt(toRoundedDownIntegerString(amount, multiplier))
 }

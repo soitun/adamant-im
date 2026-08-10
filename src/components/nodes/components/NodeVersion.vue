@@ -32,21 +32,13 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-@import '@/assets/styles/themes/adamant/_mixins.scss';
+@use '@/assets/styles/components/_color-roles.scss' as colorRoles;
+@use '@/assets/styles/themes/adamant/_mixins.scss';
 
 .node-version {
-  @include a-text-explanation-small();
-}
+  @include colorRoles.a-color-role-supporting-var('--a-node-version-color');
 
-.v-theme--light {
-  .node-version {
-    color: map-get($adm-colors, 'regular');
-  }
-}
-
-.v-theme--dark {
-  .node-version {
-    opacity: 0.7;
-  }
+  @include mixins.a-text-explanation-small();
+  color: var(--a-node-version-color);
 }
 </style>

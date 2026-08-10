@@ -1,0 +1,68 @@
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { EPOCH } from '@/lib/constants'
+
+export function useFormattedDate() {
+  const { t } = useI18n()
+  const DEFAULT_DATE_LOCALE = 'en-US'
+
+  const dateLocale = computed(() => {
+    const locale = t('region')
+
+    try {
+      return Intl.getCanonicalLocales(locale)[0] ?? DEFAULT_DATE_LOCALE
+    } catch {
+      return DEFAULT_DATE_LOCALE
+    }
+  })
+
+  const getTime = (date: Date) => {
+    const hours = date.getHours()
+    let time = hours < 10 ? '0' + hours : '' + hours
+    time = time + ':'
+    const minutes = date.getMinutes()
+    if (minutes < 10) {
+      time = time + '0' + minutes
+    } else {
+      time = time + '' + minutes
+    }
+    return time
+  }
+
+  const formatDate = (timestamp: string | number) => {
+    timestamp = parseInt(String(timestamp)) as number
+    // That's for the ADM timestamps, which use EPOCH as a base.
+    // Other cryptos use normal timestamps
+    if (timestamp < EPOCH) {
+      timestamp = timestamp * 1000 + EPOCH
+    }
+
+    const startToday = new Date()
+    startToday.setHours(0, 0, 0, 0)
+
+    const date = new Date(timestamp)
+    if (date.getTime() > startToday.getTime()) {
+      return t('chats.date_today') + ', ' + getTime(date)
+    }
+
+    const startYesterday = new Date(startToday.getTime() - 86400000)
+    if (date.getTime() > startYesterday.getTime()) {
+      return t('chats.date_yesterday') + ', ' + getTime(date)
+    }
+
+    let options: Record<string, unknown> = { weekday: 'short' }
+    if (Date.now() - timestamp > 4 * 3600 * 24 * 1000) {
+      options = { day: 'numeric', month: 'short' }
+    }
+
+    if (startToday.getFullYear() !== date.getFullYear()) {
+      options.year = 'numeric'
+    }
+
+    return date.toLocaleDateString(dateLocale.value, options) + ', ' + getTime(date)
+  }
+
+  return {
+    formatDate
+  }
+}

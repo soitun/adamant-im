@@ -1,9 +1,11 @@
 import * as bitcoin from 'bitcoinjs-lib'
+import { sha256 } from '@noble/hashes/sha2.js'
+import BigNumber from 'bignumber.js'
+import { Buffer } from 'buffer'
 
 import networks from './networks'
-import BigNumber from '../bignumber'
-import { isPositiveNumber } from '@/lib/numericHelpers'
 import { CryptosInfo } from '../constants'
+import { convertToBigIntSmallestUnit } from './bitcoin-utils'
 
 import { ECPairFactory } from 'ecpair'
 import * as tinysecp from 'tiny-secp256k1'
@@ -20,7 +22,7 @@ const getUnique = (values) => {
 
 export function getAccount(crypto, passphrase) {
   const network = networks[crypto]
-  const pwHash = bitcoin.crypto.sha256(Buffer.from(passphrase))
+  const pwHash = sha256(Buffer.from(passphrase))
   const keyPair = ECPairAPI.fromPrivateKey(pwHash, { network })
 
   return {
@@ -79,9 +81,8 @@ export default class BtcBaseApi {
 
     const hex = await this.buildTransaction(address, amount, unspents, fee)
 
-    let txid = bitcoin.crypto.sha256(Buffer.from(hex, 'hex'))
-    txid = bitcoin.crypto.sha256(Buffer.from(txid))
-    txid = txid.toString('hex').match(/.{2}/g).reverse().join('')
+    const firstHash = sha256(Buffer.from(hex, 'hex'))
+    const txid = Buffer.from(sha256(firstHash)).reverse().toString('hex')
 
     return { hex, txid }
   }
@@ -137,20 +138,20 @@ export default class BtcBaseApi {
    * @returns {string}
    */
   buildTransaction(address, amount, unspents, fee) {
-    amount = new BigNumber(amount).times(this.multiplier).toNumber()
-    amount = Math.floor(amount)
+    const localAmount = convertToBigIntSmallestUnit(amount, this.multiplier)
+    const heldFee = convertToBigIntSmallestUnit(fee, this.multiplier)
 
     const txb = new bitcoin.Psbt({
       network: this._network
     })
     txb.setVersion(1)
 
-    const target = amount + new BigNumber(fee).times(this.multiplier).toNumber()
-    let transferAmount = 0
+    const target = localAmount + heldFee
+    let transferAmount = 0n
     let inputs = 0
 
     unspents.forEach((tx) => {
-      const amt = Math.floor(tx.amount)
+      const amt = BigInt(Math.floor(tx.amount))
       if (transferAmount < target) {
         txb.addInput({
           hash: tx.txid,
@@ -164,12 +165,12 @@ export default class BtcBaseApi {
 
     txb.addOutput({
       address,
-      value: amount
+      value: localAmount
     })
     // This is a necessary step
     // If we'll not add a change to output, it will burn in hell
     const change = transferAmount - target
-    if (isPositiveNumber(change)) {
+    if (change > 0n) {
       txb.addOutput({
         address: this._address,
         value: change
@@ -187,7 +188,7 @@ export default class BtcBaseApi {
   }
 
   _mapTransaction(tx) {
-    // Remove курьи txs like "possibleDoubleSpend" and txs without info
+    // Remove invalid txs like "possibleDoubleSpend" and txs without info
     if (tx.possibleDoubleSpend || (!tx.txid && !tx.time && !tx.valueIn && !tx.vin)) return
 
     const addressField = tx.vin[0].address ? 'address' : 'addr'
@@ -241,9 +242,9 @@ export default class BtcBaseApi {
 
     let fee = tx.fees
     if (!fee) {
-      const totalIn = tx.vin.reduce((sum, x) => sum + (x.value ? +x.value : 0), 0)
-      const totalOut = tx.vout.reduce((sum, x) => sum + (x.value ? +x.value : 0), 0)
-      fee = totalIn - totalOut
+      const totalIn = tx.vin.reduce((sum, x) => sum.plus(x.value ? x.value : 0), new BigNumber(0))
+      const totalOut = tx.vout.reduce((sum, x) => sum.plus(x.value ? x.value : 0), new BigNumber(0))
+      fee = totalIn.minus(totalOut).toNumber()
     }
 
     const height = tx.height

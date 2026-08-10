@@ -6,18 +6,34 @@
     />
 
     <v-form ref="form" v-model="validForm" @submit.prevent="confirm">
+      <div v-if="addressReadonly" class="fake-input">
+        <div class="fake-input__label">
+          {{ $t('transfer.crypto') }}
+        </div>
+        <div class="fake-input__box">
+          <span class="fake-input__value">{{ currency }}</span>
+        </div>
+      </div>
       <v-select
+        v-else
         v-model="currency"
         class="a-input"
         variant="underlined"
         :items="cryptoList"
-        :disabled="addressReadonly"
-        :menu-icon="addressReadonly ? '' : 'mdi-menu-down'"
+        :menu-icon="mdiMenuDown"
       />
 
+      <div v-if="addressReadonly" class="fake-input">
+        <div class="fake-input__label">
+          {{ readonlyRecipientLabel }}
+        </div>
+        <div class="fake-input__box">
+          <span class="fake-input__value">{{ cryptoAddress }}</span>
+        </div>
+      </div>
       <v-text-field
+        v-else
         v-model.trim="cryptoAddress"
-        :disabled="addressReadonly"
         class="a-input"
         type="text"
         variant="underlined"
@@ -25,24 +41,27 @@
         @paste="onPasteURIAddress"
       >
         <template #label>
-          <span v-if="recipientName && addressReadonly" class="font-weight-medium">
-            {{ $t('transfer.to_name_label', { name: recipientName }) }}
-          </span>
-          <span v-else class="font-weight-medium">
+          <span :class="`${className}__field-label`">
             {{ $t('transfer.to_address_label') }}
           </span>
         </template>
-        <template v-if="!addressReadonly" #append-inner>
+        <template #append-inner>
           <v-menu :offset-overflow="true" :offset-y="false" left eager>
             <template #activator="{ props }">
-              <v-icon v-bind="props" icon="mdi-dots-vertical" />
+              <v-icon
+                v-bind="props"
+                :class="`${className}__menu-activator`"
+                :icon="mdiDotsVertical"
+              />
             </template>
-            <v-list>
-              <v-list-item @click="showQrcodeScanner = true">
-                <v-list-item-title>{{ $t('transfer.decode_from_camera') }}</v-list-item-title>
+            <v-list :class="`${className}__menu-list`">
+              <v-list-item :class="`${className}__menu-item`" @click="showQrcodeScanner = true">
+                <v-list-item-title :class="`${className}__menu-item-title`">
+                  {{ $t('transfer.decode_from_camera') }}
+                </v-list-item-title>
               </v-list-item>
-              <v-list-item link>
-                <v-list-item-title>
+              <v-list-item :class="`${className}__menu-item`" link>
+                <v-list-item-title :class="`${className}__menu-item-title`">
                   <qrcode-capture @detect="onDetectQrcode" @error="onDetectQrcodeError">
                     <span>{{ $t('transfer.decode_from_image') }}</span>
                   </qrcode-capture>
@@ -65,7 +84,7 @@
         color="primary"
       >
         <template #label>
-          <span class="font-weight-medium">{{ $t('transfer.amount_label') }}</span>
+          <span :class="`${className}__field-label`">{{ $t('transfer.amount_label') }}</span>
           <span class="max-amount-label">
             &nbsp;{{ `(max: ${maxToTransferFixed} ${currency})` }}
           </span>
@@ -73,15 +92,22 @@
         <template #append-inner>
           <v-menu :offset-overflow="true" :offset-y="false" left>
             <template #activator="{ props }">
-              <v-icon v-bind="props" icon="mdi-dots-vertical" />
+              <v-icon
+                v-bind="props"
+                :class="`${className}__menu-activator`"
+                :icon="mdiDotsVertical"
+              />
             </template>
-            <v-list>
+            <v-list :class="`${className}__menu-list`">
               <v-list-item
                 v-for="item in amountMenuItems"
                 :key="item.title"
+                :class="`${className}__menu-item`"
                 @click="divideAmount(item.divider)"
               >
-                <v-list-item-title>{{ $t(item.title) }}</v-list-item-title>
+                <v-list-item-title :class="`${className}__menu-item-title`">
+                  {{ $t(item.title) }}
+                </v-list-item-title>
               </v-list-item>
             </v-list>
           </v-menu>
@@ -93,9 +119,7 @@
         </div>
         <div class="fake-input__box">
           <span class="fake-input__value"> {{ transferFeeFixed }} {{ transferFeeCurrency }} </span>
-          <span class="fake-input__value fake-input__value--rate a-text-regular">
-            ~{{ transferFeeRate }}
-          </span>
+          <span class="fake-input__value fake-input__value--rate"> ~{{ transferFeeRate }} </span>
         </div>
       </div>
       <div v-if="!hideFinalAmount" class="fake-input">
@@ -104,9 +128,7 @@
         </div>
         <div class="fake-input__box">
           <span class="fake-input__value"> {{ finalAmountFixed }} {{ currency }} </span>
-          <span class="fake-input__value fake-input__value--rate a-text-regular">
-            ~{{ finalAmountRate }}
-          </span>
+          <span class="fake-input__value fake-input__value--rate"> ~{{ finalAmountRate }} </span>
         </div>
       </div>
       <v-text-field
@@ -121,16 +143,6 @@
         color="primary"
       />
 
-      <v-text-field
-        v-if="isTextDataAllowed"
-        v-model="textData"
-        class="a-input"
-        :label="textDataLabel"
-        variant="underlined"
-        counter
-        maxlength="64"
-        color="primary"
-      />
       <v-checkbox
         v-if="allowIncreaseFee"
         v-model="increaseFee"
@@ -139,25 +151,34 @@
       />
       <v-checkbox v-if="debug" v-model="dryRun" label="Dry run" color="grey darken-1" />
 
-      <div class="text-center">
+      <div :class="`${className}__actions`">
         <v-btn :class="`${className}__button`" class="a-btn-primary" @click="confirm">
           {{ $t('transfer.send_button') }}
         </v-btn>
       </div>
     </v-form>
 
-    <v-dialog v-model="dialog" width="500">
+    <v-dialog
+      v-model="dialog"
+      width="var(--a-secondary-dialog-width)"
+      class="send-funds-confirm-dialog"
+    >
       <v-card>
-        <v-card-title class="a-text-header">
+        <v-card-title class="send-funds-confirm-dialog__dialog-title">
           {{ $t('transfer.confirm_title') }}
         </v-card-title>
 
         <v-divider class="a-divider" />
 
-        <!-- eslint-disable-next-line vue/no-v-text-v-html-on-component -- Safe internal content -->
-        <v-card-text class="a-text-regular-enlarged pa-4" v-html="confirmMessage" />
+        <v-card-text class="send-funds-confirm-dialog__dialog-body">
+          <safe-html
+            class="send-funds-confirm-dialog__message"
+            :html="confirmMessage"
+            profile="ui"
+          />
+        </v-card-text>
 
-        <v-card-actions class="pa-4">
+        <v-card-actions class="send-funds-confirm-dialog__dialog-actions">
           <v-spacer />
 
           <v-btn class="a-btn-regular" variant="text" @click="dialog = false">
@@ -169,8 +190,8 @@
               v-show="showSpinner"
               indeterminate
               color="primary"
-              size="24"
-              class="mr-4"
+              :size="COMMON_INLINE_SPINNER_SIZE"
+              class="send-funds-confirm-dialog__spinner"
             />
             {{ $t('transfer.confirm_approve') }}
           </v-btn>
@@ -188,44 +209,51 @@
 
 <script>
 import { adm } from '@/lib/nodes'
-import klyIndexer from '@/lib/nodes/kly-indexer'
-import { AllNodesOfflineError } from '@/lib/nodes/utils/errors'
+import {
+  AllNodesDisabledError,
+  AllNodesOfflineError,
+  NoInternetConnectionError
+} from '@/lib/nodes/utils/errors'
 import { PendingTransactionError } from '@/lib/pending-transactions'
-import axios from 'axios'
-import { nextTick } from 'vue'
+import { computed, nextTick } from 'vue'
 
 import QrcodeCapture from '@/components/QrcodeCapture.vue'
 import QrcodeScannerDialog from '@/components/QrcodeScannerDialog.vue'
-import get from 'lodash/get'
 import { BigNumber } from 'bignumber.js'
+import { logger } from '@/utils/devTools/logger'
 
 import {
-  INCREASE_FEE_MULTIPLIER,
   Cryptos,
   TransactionStatus as TS,
   isErc20,
   isFeeEstimate,
   isEthBased,
-  getMinAmount,
   isSelfTxAllowed,
+  getMinAmount,
   CryptosInfo,
-  isTextDataAllowed,
   MessageType,
-  Fees
+  Fees,
+  Symbols
 } from '@/lib/constants'
 
-import { parseURIasAIP } from '@/lib/uri'
+import { parseURI } from '@/lib/uri'
 import { sendMessage } from '@/lib/adamant-api'
 import { replyMessageAsset } from '@/lib/adamant-api/asset'
 
 import validateAddress from '@/lib/validateAddress'
-import { formatNumber, isNumeric } from '@/lib/numericHelpers'
+import { formatNumber, isNumeric, trimTrailingZeros } from '@/lib/numericHelpers'
 import partnerName from '@/mixins/partnerName'
 
 import WarningOnPartnerAddressDialog from '@/components/WarningOnPartnerAddressDialog.vue'
+import SafeHtml from '@/components/common/SafeHtml'
+import { escapeHtml } from '@/lib/markdown'
 import { isStringEqualCI } from '@/lib/textHelpers'
 import { formatSendTxError } from '@/lib/txVerify'
 import { AllCryptos } from '@/lib/constants/cryptos'
+import { COMMON_INLINE_SPINNER_SIZE } from '@/components/common/helpers/uiMetrics'
+
+import { mdiDotsVertical, mdiMenuDown } from '@mdi/js'
+import { useStore } from 'vuex'
 
 /**
  * @returns {string | boolean}
@@ -249,7 +277,8 @@ export default {
   components: {
     QrcodeCapture,
     QrcodeScannerDialog,
-    WarningOnPartnerAddressDialog
+    WarningOnPartnerAddressDialog,
+    SafeHtml
   },
   mixins: [partnerName],
   props: {
@@ -275,6 +304,22 @@ export default {
     }
   },
   emits: ['send', 'error'],
+  setup() {
+    const store = useStore()
+
+    const isOnline = computed(() => store.getters['isOnline'])
+
+    const checkIsOnline = () => {
+      return navigator.onLine || isOnline.value
+    }
+
+    return {
+      checkIsOnline,
+      COMMON_INLINE_SPINNER_SIZE,
+      mdiDotsVertical,
+      mdiMenuDown
+    }
+  },
   data: () => ({
     currency: '',
     address: '',
@@ -310,9 +355,9 @@ export default {
     increaseFee: false,
     showWarningOnPartnerAddressDialog: false,
     warningOnPartnerInfo: {},
+    estimatedGasLimit: null,
 
     // Account exists check
-    // Currently works only with KLY
     account: {
       isNew: false,
       abortController: new AbortController(),
@@ -325,14 +370,6 @@ export default {
   }),
   computed: {
     className: () => 'send-funds-form',
-
-    /**
-     * Some cryptos allows to save public data with a Tx
-     * @returns {boolean}
-     */
-    isTextDataAllowed() {
-      return isTextDataAllowed(this.currency) && !this.addressReadonly
-    },
 
     /**
      * Label for a textData input
@@ -354,7 +391,9 @@ export default {
      * @returns {string}
      */
     transferFeeFixed() {
-      return BigNumber(this.transferFee).toFixed()
+      const feeCurrency = isErc20(this.currency) ? 'ETH' : this.currency
+
+      return this.formatDisplayAmount(this.transferFee, feeCurrency)
     },
 
     /**
@@ -389,7 +428,7 @@ export default {
      * @returns {string}
      */
     finalAmountFixed() {
-      return BigNumber(this.finalAmount).toFixed()
+      return this.formatDisplayAmount(this.finalAmount, this.currency)
     },
 
     /**
@@ -469,6 +508,11 @@ export default {
     recipientName() {
       return this.getPartnerName(this.address)
     },
+    readonlyRecipientLabel() {
+      return this.recipientName
+        ? this.$t('transfer.to_name_label', { name: this.recipientName })
+        : this.$t('transfer.to_address_label')
+    },
     exponent() {
       return CryptosInfo[this.currency].cryptoTransferDecimals
     },
@@ -486,12 +530,14 @@ export default {
           ? 'transfer.confirm_message_with_name'
           : 'transfer.confirm_message'
 
+      // The locale strings carry markup, so every interpolated value has to be escaped:
+      // `recipientName` is a contact name that can originate from the network.
       return this.$t(msgType, {
-        amount: BigNumber(this.amount).toFixed(),
-        crypto: this.currency,
-        name: this.recipientName,
-        address: this.cryptoAddress,
-        fee: this.transferFee
+        amount: escapeHtml(BigNumber(this.amount).toFixed()),
+        crypto: escapeHtml(this.currency),
+        name: escapeHtml(this.recipientName ?? ''),
+        address: escapeHtml(this.cryptoAddress ?? ''),
+        fee: escapeHtml(String(this.transferFee ?? ''))
       })
     },
     validationRules() {
@@ -549,7 +595,7 @@ export default {
         this.$store.state.rate.rates[`${this.transferFeeCurrency}/${this.currentCurrency}`]
 
       if (currentRate === undefined) {
-        return ''
+        return Symbols.HOURGLASS
       }
 
       const feeRate = (this.transferFeeFixed * currentRate).toFixed(2)
@@ -560,7 +606,7 @@ export default {
       const currentRate = this.$store.state.rate.rates[`${this.currency}/${this.currentCurrency}`]
 
       if (currentRate === undefined) {
-        return ''
+        return Symbols.HOURGLASS
       }
 
       const amountRate = (this.finalAmountFixed * currentRate).toFixed(2)
@@ -576,8 +622,20 @@ export default {
         this.amount = 0
       }
     },
+    amount() {
+      this.estimateGasLimit()
+    },
     cryptoAddress(cryptoAddress) {
       this.checkIsNewAccount(cryptoAddress)
+      this.estimateGasLimit()
+    },
+    increaseFee(newValue) {
+      const storageKey = isEthBased(this.currency) ? 'ETH' : this.currency
+      localStorage.setItem(`increaseFee_${storageKey}`, newValue)
+    },
+    currency() {
+      this.restoreIncreaseFeeState()
+      this.estimatedGasLimit = null
     }
   },
   created() {
@@ -585,15 +643,54 @@ export default {
     this.address = this.recipientAddress
     this.amount = this.amountToSend
 
+    const isSaved = this.$store.getters['options/wasSendingFunds']
+
+    // if not from chats
+    if (isSaved && !this.$route.query.from) {
+      this.amountString = this.$store.getters['options/savedAmountToSend']
+      this.address = this.$store.getters['options/savedRecipientAddress']
+      this.cryptoAddress = this.$store.getters['options/savedRecipientAddress']
+      this.increaseFee = this.$store.getters['options/savedIncreaseFee']
+    }
+
+    // if from chats
+    if (this.$route.query.from) {
+      this.amountString = this.$store.getters['options/savedAmountFromChat']
+      this.comment = this.$store.getters['options/savedComment']
+      this.increaseFee = this.$store.getters['options/savedIncreaseFeeChat']
+    }
+
     // create watcher after setting default from props
     this.$watch('currency', () => {
       this.$refs.form.validate()
+      if (!this.addressReadonly && this.$store.state.options.currentWallet !== this.currency) {
+        this.$store.commit('options/updateOption', {
+          key: 'currentWallet',
+          value: this.currency
+        })
+      }
     })
+
+    // sync carousel → form when wallet tab is tapped while on SendFunds
+    this.$watch(
+      () => this.$store.state.options.currentWallet,
+      (newVal) => {
+        if (!this.addressReadonly && this.currency !== newVal && this.cryptoList.includes(newVal)) {
+          this.currency = newVal
+        }
+      }
+    )
   },
   mounted() {
     this.fetchUserCryptoAddress()
   },
   methods: {
+    formatDisplayAmount(amount, currency) {
+      const decimals = CryptosInfo[currency].cryptoTransferDecimals
+      const formatted = BigNumber(amount).decimalPlaces(decimals, BigNumber.ROUND_DOWN).toFixed()
+
+      return trimTrailingZeros(formatted)
+    },
     checkIsNewAccount(cryptoAddress) {
       this.account.isNew = false
 
@@ -606,31 +703,6 @@ export default {
 
       // Create a new AbortController for the current request
       this.account.abortController = new AbortController()
-
-      switch (this.currency) {
-        case Cryptos.KLY:
-          this.account.loading = true
-          klyIndexer
-            .checkAccountExists(cryptoAddress, {
-              signal: this.account.abortController.signal
-            })
-            .then((exists) => {
-              this.account.isNew = !exists
-            })
-            .catch((err) => {
-              if (axios.isCancel(err)) {
-                // Request canceled
-                return
-              }
-
-              throw err
-            })
-            .finally(() => {
-              this.account.loading = false
-            })
-
-          break
-      }
     },
     confirm() {
       const abstract = validateForm.call(this)
@@ -662,7 +734,7 @@ export default {
       this.$store.dispatch('snackbar/show', {
         message: this.$t('transfer.invalid_qr_code')
       })
-      console.warn(error)
+      logger.log('SendFundsForm', 'warn', error)
     },
 
     /**
@@ -671,7 +743,7 @@ export default {
      */
     onPasteURIAddress(e) {
       const data = e.clipboardData.getData('text')
-      const address = parseURIasAIP(data).address
+      const address = parseURI(data).address
 
       if (validateAddress(this.currency, address)) {
         e.preventDefault()
@@ -687,7 +759,7 @@ export default {
      */
     onPasteURIComment(e) {
       nextTick(() => {
-        const params = parseURIasAIP(e.target.value).params
+        const params = parseURI(e.target.value).params
 
         if (params.message) {
           this.comment = params.message
@@ -700,14 +772,13 @@ export default {
      * @param {string} uri URI
      */
     onScanQrcode(uri) {
-      const recipient = parseURIasAIP(uri)
-
-      this.cryptoAddress = ''
-      if (validateAddress(this.currency, recipient.address)) {
-        this.cryptoAddress = recipient.address
-        if (recipient.params.amount) {
-          const amount = formatNumber(this.exponent)(recipient.params.amount)
-
+      const recipient = parseURI(uri)
+      const { params, address } = recipient
+      const isValidAddress = validateAddress(this.currency, address)
+      if (isValidAddress) {
+        this.cryptoAddress = address
+        if (params.amount && !this.amountString) {
+          const amount = formatNumber(this.exponent)(params.amount)
           if (Number(amount) <= this.maxToTransfer) {
             this.amountString = amount
           }
@@ -743,22 +814,30 @@ export default {
         })
         .catch((error) => {
           const formattedError = formatSendTxError(error)
-          console.warn('Error while sending transaction', formattedError)
+          logger.log('SendFundsForm', 'warn', 'Error while sending transaction', formattedError)
           let message = formattedError.errorMessage
-          if (/dust/i.test(message) || get(error, 'response.data.error.code') === -26) {
+          if (/dust/i.test(message) || error?.response?.data?.error?.code === -26) {
             message = this.$t('transfer.error_dust_amount')
-          } else if (/minimum remaining balance requirement/i.test(message)) {
-            message = this.$t('transfer.recipient_minimum_balance')
           } else if (/Invalid JSON RPC Response/i.test(message)) {
             message = this.$t('transfer.error_unknown')
           } else if (error instanceof AllNodesOfflineError) {
-            message = this.$t('transfer.error_all_nodes_offline', {
+            if (this.currency !== Cryptos.ADM && error.nodeLabel === 'adm') {
+              message = this.$t('errors.all_adm_nodes_offline')
+            } else {
+              message = this.$t('errors.all_nodes_offline', {
+                crypto: error.nodeLabel.toUpperCase()
+              })
+            }
+          } else if (error instanceof AllNodesDisabledError) {
+            message = this.$t('errors.all_nodes_disabled', {
               crypto: error.nodeLabel.toUpperCase()
             })
           } else if (error instanceof PendingTransactionError) {
             message = this.$t('transfer.error_pending_transaction', {
               crypto: error.crypto
             })
+          } else if (error instanceof NoInternetConnectionError) {
+            message = this.$t('connection.offline')
           }
           this.$emit('error', message)
         })
@@ -769,6 +848,10 @@ export default {
         })
     },
     async sendFunds() {
+      if (!this.checkIsOnline()) {
+        throw new NoInternetConnectionError()
+      }
+
       if (this.currency === Cryptos.ADM) {
         let promise
         // 1. if come from Chat then sendMessage
@@ -874,29 +957,67 @@ export default {
       return amount >= min
     },
     validateNaturalUnits(amount, currency) {
-      const units = CryptosInfo[currency].decimals
+      const units = CryptosInfo[currency].cryptoTransferDecimals
 
       const [, right = ''] = BigNumber(amount).toFixed().split('.')
 
       return right.length <= units
     },
     calculateTransferFee(amount) {
-      const coef = this.increaseFee ? INCREASE_FEE_MULTIPLIER : 1
-      return (
-        coef *
-        this.$store.getters[`${this.currency.toLowerCase()}/fee`](
-          amount || this.balance,
-          this.cryptoAddress,
-          this.textData,
-          this.account.isNew
-        )
+      return this.$store.getters[`${this.currency.toLowerCase()}/fee`](
+        amount || this.balance,
+        this.cryptoAddress,
+        this.textData,
+        this.account.isNew,
+        this.increaseFee,
+        this.estimatedGasLimit
       )
+    },
+    restoreIncreaseFeeState() {
+      const storageKey = isEthBased(this.currency) ? 'ETH' : this.currency
+      const saved = localStorage.getItem(`increaseFee_${storageKey}`)
+      this.increaseFee = saved === 'true'
+    },
+    async estimateGasLimit() {
+      if (!isEthBased(this.currency)) {
+        return
+      }
+
+      if (
+        this.amount === 0 ||
+        !this.cryptoAddress ||
+        !validateAddress(this.currency, this.cryptoAddress)
+      ) {
+        this.estimatedGasLimit = null
+        return
+      }
+
+      try {
+        const gasLimit = await this.$store.dispatch(
+          `${this.currency.toLowerCase()}/estimateGasLimit`,
+          {
+            amount: this.amount,
+            address: this.cryptoAddress
+          }
+        )
+
+        this.estimatedGasLimit = gasLimit
+      } catch (error) {
+        logger.log('SendFundsForm', 'warn', `${this.currency} EstimateGas failed:`, error)
+        this.estimatedGasLimit = null
+      }
     }
   }
 }
 </script>
 
 <style lang="scss" scoped>
+@use '@/assets/styles/components/_form-action-layout.scss' as formActionLayout;
+@use '@/assets/styles/components/_input-action-menu.scss' as inputActionMenu;
+@use '@/assets/styles/components/_secondary-dialog.scss' as secondaryDialog;
+@use '@/assets/styles/components/_text-content.scss' as textContent;
+@use '@/assets/styles/themes/adamant/_mixins.scss' as mixins;
+
 .a-input :deep(input[type='number']) {
   -moz-appearance: textfield;
 }
@@ -904,9 +1025,45 @@ export default {
 .a-input :deep(input[type='number']::-webkit-outer-spin-button) {
   -webkit-appearance: none;
 }
+
+.send-funds-confirm-dialog {
+  @include secondaryDialog.a-secondary-dialog-card-frame();
+
+  --a-send-funds-confirm-spinner-gap: var(--a-space-4);
+
+  &__dialog-title {
+    @include mixins.a-text-header();
+  }
+
+  &__message {
+    @include textContent.a-content-body-copy();
+  }
+
+  &__spinner {
+    margin-inline-end: var(--a-send-funds-confirm-spinner-gap);
+  }
+}
+
 .send-funds-form {
+  --a-send-funds-button-margin-top: var(--a-space-4);
+  --a-send-funds-actions-padding-bottom: var(--a-space-10);
+  --a-send-funds-amount-label-size: var(--a-font-size-sm);
+  --a-send-funds-amount-label-floating-scale: 0.75;
+  --a-send-funds-field-label-font-weight: var(--a-font-weight-medium);
+
+  @include inputActionMenu.a-input-action-menu();
+
+  &__field-label {
+    font-weight: var(--a-send-funds-field-label-font-weight);
+  }
+
   &__button {
-    margin-top: 15px;
+    margin-top: var(--a-send-funds-button-margin-top);
+  }
+
+  &__actions {
+    @include formActionLayout.a-form-actions-center();
+    padding-bottom: var(--a-send-funds-actions-padding-bottom);
   }
   &__amount-input {
     :deep(.v-field__field) {
@@ -914,15 +1071,17 @@ export default {
         align-items: baseline;
 
         .max-amount-label {
-          font-size: 14px;
+          font-size: var(--a-send-funds-amount-label-size);
         }
       }
     }
 
     :deep(.v-field__outline) {
       .v-label.v-field-label.v-field-label--floating .max-amount-label {
-        font-size: 10.5px; // -25% from original size
-        line-height: 1;
+        font-size: calc(
+          var(--a-send-funds-amount-label-size) * var(--a-send-funds-amount-label-floating-scale)
+        );
+        line-height: var(--a-send-funds-amount-label-line-height);
       }
     }
   }

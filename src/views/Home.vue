@@ -1,31 +1,38 @@
 <template>
-  <pull-down @action="updateBalances" :action-text="$t('chats.pull_down_actions.update_balances')">
-    <v-row justify="center" no-gutters :class="className">
-      <container>
-        <v-sheet class="white--text" color="transparent" :class="`${className}__card`">
+  <pull-down @action="updateBalances" :action-text="t('chats.pull_down_actions.update_balances')">
+    <v-row justify="center" :class="className">
+      <container disableMaxWidth>
+        <v-sheet color="transparent" :class="`${className}__card`">
           <!-- Wallets -->
           <v-sheet color="transparent" :class="`${className}__wallets`">
             <v-tabs
-              ref="vtabs"
               v-model="currentWallet"
+              :key="walletTabsKey"
               :class="`${className}__tabs`"
               grow
               stacked
               height="auto"
               show-arrows
+              center-active
             >
               <v-tab
-                v-for="wallet in wallets"
+                v-for="(wallet, index) in wallets"
                 :key="wallet.cryptoCurrency"
                 :value="wallet.cryptoCurrency"
-                @wheel="onWheel"
               >
-                <wallet-tab :wallet="wallet" :fiat-currency="currentCurrency" />
+                <wallet-tab
+                  :wallet="wallet"
+                  :fiat-currency="currentCurrency"
+                  :hide-fiat-rates="allWalletBalancesZero"
+                  :is-balance-valid="balances[index]"
+                  :is-refreshing="isRefreshing"
+                />
               </v-tab>
             </v-tabs>
 
             <v-window
               v-model="currentWallet"
+              :key="walletWindowKey"
               :touch="{
                 start: () => {
                   // Due to `stopPropagation` the `<PullDown/>` component cannot
@@ -46,12 +53,13 @@
               >
                 <wallet-card
                   :address="wallet.address"
-                  :balance="wallet.balance"
+                  :all-coin-nodes-disabled="areNodesDisabled(wallet.cryptoCurrency)"
                   :crypto="wallet.cryptoCurrency"
                   :crypto-name="wallet.cryptoName"
+                  :hide-fiat-rates="allWalletBalancesZero"
                   :rate="wallet.rate"
                   :current-currency="currentCurrency"
-                  @click:balance="goToTransactions"
+                  @click:balance="handleBalanceClick"
                 >
                   <template #icon>
                     <crypto-icon :crypto="wallet.cryptoCurrency" size="large" />
@@ -66,167 +74,232 @@
   </pull-down>
 </template>
 
-<script>
+<script setup lang="ts">
 import WalletCard from '@/components/WalletCard.vue'
 import WalletTab from '@/components/WalletTab.vue'
+import type { Wallet } from '@/components/WalletTab.vue'
 import CryptoIcon from '@/components/icons/CryptoIcon.vue'
-import numberFormat from '@/filters/numberFormat'
-
 import { PullDown } from '@/components/common/PullDown'
-import { Cryptos, CryptosInfo, isErc20 } from '@/lib/constants'
+import { Cryptos, CryptosInfo, CryptoSymbol, isErc20 } from '@/lib/constants'
+import { vibrate } from '@/lib/vibrate'
+import { useStore } from 'vuex'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { CoinSymbol } from '@/store/modules/wallets/types'
+import { useI18n } from 'vue-i18n'
+import { NodeStatusResult } from '@/lib/nodes/abstract.node'
+import { useBalanceCheck } from '@/hooks/useBalanceCheck'
+import { Tab, TABS } from '@/components/nodes/types'
 
-/**
- * Center VTab element on click.
- *
- * @override vuetify.VTabs.methods.scrollIntoView()
- */
-function scrollIntoView() {
-  if (!this.activeTab) return
-  if (!this.isOverflowing) return (this.scrollOffset = 0)
+const { t } = useI18n()
+const store = useStore()
+const route = useRoute()
+const router = useRouter()
+const balances = useBalanceCheck()
 
-  const totalWidth = this.widths.wrapper + this.scrollOffset
-  const { clientWidth, offsetLeft } = this.activeTab.$el
+const className = 'account-view'
 
-  const scrollOffset =
-    this.scrollOffset - (totalWidth - offsetLeft - clientWidth / 2 - this.widths.wrapper / 2)
+const isRefreshing = ref(false)
 
-  if (scrollOffset <= 0) {
-    this.scrollOffset = 0
-  } else if (scrollOffset >= this.widths.container - this.widths.wrapper) {
-    this.scrollOffset = this.widths.container - this.widths.wrapper
-  } else {
-    this.scrollOffset = scrollOffset
-  }
-}
+const orderedVisibleWalletSymbols = computed(() => {
+  return store.getters['wallets/getVisibleOrderedWalletSymbols']
+})
 
-export default {
-  components: {
-    PullDown,
-    WalletCard,
-    WalletTab,
-    CryptoIcon
+const currentCurrency = computed({
+  get() {
+    return store.state.options.currentRate
   },
-  computed: {
-    className: () => 'account-view',
-    orderedVisibleWalletSymbols() {
-      return this.$store.getters['wallets/getVisibleOrderedWalletSymbols']
-    },
-    wallets() {
-      const state = this.$store.state
+  set(value) {
+    store.commit('options/updateOption', {
+      key: 'currentRate',
+      value
+    })
+  }
+})
 
-      return this.orderedVisibleWalletSymbols.map((crypto) => {
-        const key = crypto.symbol.toLowerCase()
-        const address = crypto.symbol === Cryptos.ADM ? state.address : state[key].address
-        const balance = crypto.symbol === Cryptos.ADM ? state.balance : state[key].balance
-        const erc20 = isErc20(crypto.symbol.toUpperCase())
-        const currentRate = state.rate.rates[`${crypto.symbol}/${this.currentCurrency}`]
-        const rate = currentRate !== undefined ? Number((balance * currentRate).toFixed(2)) : 0
+const admNodes = computed<NodeStatusResult[]>(() => store.getters['nodes/adm'])
+const allAdmNodesDisabled = computed(() =>
+  admNodes.value.every((node) => node.status === 'disabled')
+)
+const coinNodes = computed<NodeStatusResult[]>(() => store.getters['nodes/coins'])
+const allCoinNodesDisabled = computed(() =>
+  coinNodes.value.every((node) => node.status === 'disabled')
+)
+const wallets = computed<Wallet[]>(() => {
+  const state = store.state
+  return orderedVisibleWalletSymbols.value.map((crypto: CoinSymbol) => {
+    const key = crypto.symbol.toLowerCase()
+    const walletState = crypto.symbol === Cryptos.ADM ? null : state[key]
+    const address = crypto.symbol === Cryptos.ADM ? state.address : walletState?.address || ''
+    const balance = crypto.symbol === Cryptos.ADM ? state.balance : walletState?.balance || 0
+    const erc20 = isErc20(crypto.symbol.toUpperCase() as CryptoSymbol)
+    const currentRate = state.rate.rates[`${crypto.symbol}/${currentCurrency.value}`]
+    const rate = currentRate !== undefined ? Number((balance * currentRate).toFixed(2)) : 0
 
-        const cryptoName = CryptosInfo[crypto.symbol].nameShort || CryptosInfo[crypto.symbol].name
+    const cryptoName = CryptosInfo[crypto.symbol].nameShort || CryptosInfo[crypto.symbol].name
 
-        return {
-          address,
-          balance,
-          cryptoName,
-          erc20,
-          rate,
-          cryptoCurrency: crypto.symbol
-        }
-      })
-    },
-    currentWallet: {
-      get() {
-        return this.$store.state.options.currentWallet
-      },
-      set(value) {
-        this.$store.commit('options/updateOption', {
-          key: 'currentWallet',
-          value
-        })
-      }
-    },
-    currentCurrency: {
-      get() {
-        return this.$store.state.options.currentRate
-      },
-      set(value) {
-        this.$store.commit('options/updateOption', {
-          key: 'currentRate',
-          value
-        })
-      }
+    return {
+      address,
+      balance,
+      cryptoName,
+      erc20,
+      rate,
+      cryptoCurrency: crypto.symbol
     }
-  },
-  mounted() {
-    this.$refs.vtabs.scrollIntoView = scrollIntoView
-  },
-  methods: {
-    goToTransactions(crypto) {
-      this.$router.push({
-        name: 'Transactions',
-        params: {
-          crypto
-        }
-      })
-    },
-    onWheel(e) {
-      const currentWallet = this.wallets.find(
-        (wallet) => wallet.cryptoCurrency === this.currentWallet
-      )
-      const currentWalletIndex = this.wallets.indexOf(currentWallet)
+  })
+})
 
-      const nextWalletIndex = e.deltaY < 0 ? currentWalletIndex + 1 : currentWalletIndex - 1
-      const nextWallet = this.wallets[nextWalletIndex]
+const allWalletBalancesZero = computed(() => {
+  return wallets.value.every((wallet) => Number(wallet.balance) === 0)
+})
 
-      if (nextWallet) this.currentWallet = nextWallet.cryptoCurrency
-    },
-    updateBalances() {
-      this.$store.dispatch('updateBalance', {
-        requestedByUser: true
-      })
-    },
-    numberFormat
-  }
+const walletOrderKey = computed(() => {
+  return orderedVisibleWalletSymbols.value.map((wallet: CoinSymbol) => wallet.symbol).join(',')
+})
+
+const walletTabsKey = computed(() => {
+  return `tabs-${walletOrderKey.value}`
+})
+
+const walletWindowKey = computed(() => {
+  return `window-${walletOrderKey.value}`
+})
+
+const areNodesDisabled = (crypto: CryptoSymbol) => {
+  return crypto === 'ADM' ? allAdmNodesDisabled.value : allCoinNodesDisabled.value
 }
+
+const updateBalances = () => {
+  if (allCoinNodesDisabled.value) {
+    store.dispatch('snackbar/show', {
+      message: t('home.no_active_nodes_pull_down', {
+        coin: currentWallet.value
+      })
+    })
+  }
+
+  isRefreshing.value = true
+
+  store
+    .dispatch('updateBalance', {
+      requestedByUser: true
+    })
+    .finally(() => {
+      isRefreshing.value = false
+    })
+
+  vibrate.veryShort()
+}
+
+const goToTransactions = (crypto: string) => {
+  const path = `/transactions/${crypto}`
+  store.commit('options/setAccountScrollPosition', { path, top: 0 })
+  store.commit('options/updateOption', { key: 'forceTransactionsRefresh', value: true })
+
+  router.push({
+    name: 'Transactions',
+    params: {
+      crypto
+    }
+  })
+}
+
+const goToCoinNodes = (tab: Tab) => {
+  store.commit('options/updateOption', {
+    key: 'currentNodesTab',
+    value: tab
+  })
+
+  router.push({
+    name: 'Nodes'
+  })
+}
+
+const handleBalanceClick = (crypto: string) => {
+  const isAdm = crypto === 'ADM'
+
+  const targetType = isAdm ? TABS.adm : TABS.coins
+  const isDisabled = isAdm ? allAdmNodesDisabled.value : allCoinNodesDisabled.value
+
+  if (isDisabled) {
+    return goToCoinNodes(targetType)
+  }
+
+  goToTransactions(crypto)
+}
+
+const currentWallet = computed({
+  get() {
+    return store.state.options.currentWallet
+  },
+  set(value) {
+    store.commit('options/updateOption', {
+      key: 'currentWallet',
+      value
+    })
+  }
+})
+
+watch(currentWallet, (value) => {
+  if (!value) return
+
+  const currentCrypto = route.params.crypto
+  if (currentCrypto === value) return
+
+  if (route.name === 'Transactions' || route.name === 'Transaction') {
+    goToTransactions(value)
+  }
+})
 </script>
 
 <style lang="scss" scoped>
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use 'sass:color';
+@use '@/assets/styles/settings/_colors.scss';
+@use 'vuetify/settings';
 
 /**
  * 1. Reset VTabs container fixed height.
  * 2. Reset VTabItem opacity.
  */
 .account-view {
+  margin: 0;
+
   &__wallets {
     &.v-card {
       background-color: transparent;
     }
     :deep(.v-tabs-slider) {
-      height: 2px;
+      height: var(--a-account-tabs-slider-height);
     }
     :deep(.v-tabs) {
-      padding: 10px 0 1px 0;
-      margin-bottom: 10px;
+      padding-top: var(--a-account-tabs-padding-top);
+      padding-bottom: var(--a-account-tabs-padding-bottom);
+      margin-bottom: var(--a-account-tabs-margin-bottom);
     }
     :deep(.v-tab) {
-      font-weight: 300;
-      font-size: 16px;
-      padding: 6px 4px;
-      letter-spacing: normal;
-      min-width: 74px;
+      font-weight: var(--a-account-tab-font-weight);
+      font-size: var(--a-account-tab-font-size);
+      padding-block: var(--a-account-tab-padding-block);
+      padding-inline: var(--a-account-tab-padding-inline);
+      letter-spacing: var(--a-account-tab-letter-spacing);
+      min-width: var(--a-account-tab-min-width);
       display: flex;
-      align-items: flex-start;
+      align-items: center;
+      justify-content: center;
+    }
+    :deep(.v-tab .v-btn__content) {
+      align-items: center;
+      justify-content: center;
     }
     :deep(.v-tab--selected) {
-      font-weight: 500;
+      font-weight: var(--a-account-tab-font-weight-selected);
     }
     :deep(.v-tab):not(.v-tab--selected) {
       opacity: 1;
     }
     :deep(.v-tabs.v-tabs.v-tabs .v-slide-group__prev.v-slide-group__prev--disabled) {
-      display: none; // workaround: hide left/right arrows
+      visibility: hidden; // keep affix width so first tab stays centered
     }
     :deep(.v-tab.v-tab--selected::before) {
       background-color: unset;
@@ -236,19 +309,19 @@ export default {
       top: 0;
       bottom: 0;
       left: 0;
-      flex-basis: 32px;
-      min-width: 32px;
+      flex-basis: var(--a-account-tab-affix-width);
+      min-width: var(--a-account-tab-affix-width);
     }
     :deep(.v-slide-group__next) {
       position: absolute;
       top: 0;
       bottom: 0;
       right: 0;
-      flex-basis: 32px;
-      min-width: 32px;
+      flex-basis: var(--a-account-tab-affix-width);
+      min-width: var(--a-account-tab-affix-width);
     }
     :deep(.v-slide-group__next.v-slide-group__next--disabled) {
-      display: none;
+      visibility: hidden; // keep affix width so last tab stays centered
     }
     :deep(.v-tabs .v-btn--stacked .v-btn__content) {
       line-height: normal;
@@ -258,7 +331,7 @@ export default {
     position: relative;
   }
   &__icon {
-    margin-bottom: 3px;
+    margin-bottom: var(--a-account-tab-icon-offset);
   }
 }
 
@@ -267,38 +340,38 @@ export default {
   .account-view {
     &__wallets {
       :deep(.v-tabs-bar) {
-        background-color: map-get($adm-colors, 'secondary2-transparent');
+        background-color: var(--a-color-surface-soft-light);
       }
       :deep(.v-tabs-slider) {
-        background-color: map-get($adm-colors, 'primary') !important;
+        background-color: map.get(colors.$adm-colors, 'primary');
       }
       :deep(.v-tab) {
         &:not(.v-tab--selected) {
-          color: map-get($adm-colors, 'regular');
+          color: map.get(colors.$adm-colors, 'regular');
         }
       }
       :deep(.v-tabs .v-slide-group__prev .v-icon),
       :deep(.v-tabs .v-slide-group__next .v-icon) {
         z-index: 1;
-        color: map-get($adm-colors, 'primary');
-        border-radius: 50%;
-        background-color: transparentize(map-get($adm-colors, 'primary2'), 0.7);
+        color: map.get(colors.$adm-colors, 'primary');
+        border-radius: var(--a-radius-round);
+        background-color: color.adjust(map.get(colors.$adm-colors, 'primary2'), $alpha: -0.7);
       }
       :deep(.v-tabs .v-slide-group__prev),
       :deep(.v-tabs .v-slide-group__next) {
         .v-icon:hover {
-          background-color: transparentize(map-get($adm-colors, 'primary2'), 0.3);
+          background-color: color.adjust(map.get(colors.$adm-colors, 'primary2'), $alpha: -0.7);
         }
       }
       :deep(:not(.v-tab--selected)) {
         .svg-icon {
-          fill: map-get($adm-colors, 'muted');
+          fill: map.get(colors.$adm-colors, 'muted');
         }
       }
       :deep(.v-tab--selected) {
-        color: map-get($adm-colors, 'primary');
+        color: map.get(colors.$adm-colors, 'primary');
         .svg-icon {
-          fill: map-get($adm-colors, 'primary');
+          fill: map.get(colors.$adm-colors, 'primary');
         }
       }
     }
@@ -312,19 +385,19 @@ export default {
         background-color: transparent;
       }
       :deep(.v-tabs-slider) {
-        background-color: map-get($adm-colors, 'primary') !important;
+        background-color: map.get(colors.$adm-colors, 'primary');
       }
       :deep(.v-tabs .v-slide-group__prev .v-icon),
       :deep(.v-tabs .v-slide-group__next .v-icon) {
         z-index: 1;
-        color: map-get($adm-colors, 'primary');
-        border-radius: 50%;
-        background-color: transparentize(map-get($adm-colors, 'primary2'), 0.7);
+        color: map.get(colors.$adm-colors, 'primary');
+        border-radius: var(--a-radius-round);
+        background-color: color.adjust(map.get(colors.$adm-colors, 'primary2'), $alpha: -0.7);
       }
       :deep(.v-tabs .v-slide-group__prev),
       :deep(.v-tabs .v-slide-group__next) {
         .v-icon:hover {
-          background-color: transparentize(map-get($adm-colors, 'primary2'), 0.3);
+          background-color: color.adjust(map.get(colors.$adm-colors, 'primary2'), $alpha: -0.3);
         }
       }
       :deep(.v-tabs-items) {
@@ -332,13 +405,13 @@ export default {
       }
       :deep(.v-tab) {
         &:not(.v-tab--selected) {
-          color: map-get($shades, 'white');
+          color: map.get(settings.$shades, 'white');
         }
       }
       :deep(.v-tab--selected) {
-        color: map-get($adm-colors, 'primary');
+        color: map.get(colors.$adm-colors, 'primary');
         .svg-icon {
-          fill: map-get($adm-colors, 'primary');
+          fill: map.get(colors.$adm-colors, 'primary');
         }
       }
     }

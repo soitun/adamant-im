@@ -16,7 +16,7 @@ export default {
           value: decrypt(value)
         }
       })
-    } catch (err) {
+    } catch {
       throw new Error('Invalid password')
     }
   },
@@ -31,7 +31,7 @@ export default {
         value: encrypt(value)
       })
 
-      return tx.complete
+      return tx.done
     } catch (err) {
       return Promise.reject(err)
     }
@@ -51,7 +51,7 @@ export default {
         })
       })
 
-      return tx.complete
+      return tx.done
     } catch (err) {
       return Promise.reject(err)
     }
@@ -63,6 +63,6 @@ export default {
 
     tx.objectStore(storeName).clear()
 
-    return tx.complete
+    return tx.done
   }
 }

@@ -1,36 +1,42 @@
 <template>
-  <v-dialog v-model="show" :class="className" width="500">
-    <v-card :class="className">
+  <v-dialog v-model="show" :class="classes.root" width="var(--a-secondary-dialog-width)">
+    <v-card :class="classes.root">
       <!-- Camera Waiting -->
       <v-row
         v-if="cameraStatus === 'waiting'"
         justify="center"
         align="center"
-        class="pa-8"
-        no-gutters
+        :class="`${classes.root}__status`"
+        gap="0"
       >
-        <div class="a-text-header">
-          {{ $t('scan.waiting_camera') }}
+        <div :class="`${classes.root}__status-title`">
+          {{ t('scan.waiting_camera') }}
         </div>
-        <v-progress-circular indeterminate color="primary" size="32" class="ml-4" />
+        <v-progress-circular
+          indeterminate
+          color="primary"
+          :size="QRCODE_SCANNER_WAITING_SPINNER_SIZE"
+          :class="`${classes.root}__waiting-spinner`"
+        />
       </v-row>
 
       <!-- Camera Active -->
-      <v-row v-show="cameraStatus === 'active'" no-gutters>
+      <v-row v-show="cameraStatus === 'active'" gap="0">
         <v-col cols="12">
-          <div :class="`${className}__camera`">
-            <video ref="camera" />
-            <v-menu v-if="cameras.length > 1" offset-y :class="`${className}__camera-select`">
-              <template #activator>
-                <v-btn variant="text" color="white">
-                  <v-icon size="x-large" icon="mdi-camera" />
+          <div :class="classes.camera">
+            <video ref="videoElement" />
+            <v-menu v-if="cameras.length > 1" offset-y :class="classes.cameraSelect">
+              <template #activator="{ props }">
+                <v-btn variant="text" color="white" v-bind="props">
+                  <v-icon size="x-large" :icon="mdiCamera" />
                 </v-btn>
               </template>
               <v-list>
                 <v-list-item
-                  v-for="camera in cameras"
-                  :key="camera.deviceId"
-                  @click="currentCamera = camera.deviceId"
+                  v-for="(camera, index) in cameras"
+                  :key="index"
+                  @click="currentCamera = index"
+                  :disabled="currentCamera === index"
                 >
                   <v-list-item-title>{{ camera.label }}</v-list-item-title>
                 </v-list-item>
@@ -38,47 +44,92 @@
             </v-menu>
           </div>
         </v-col>
-        <v-col cols="12" class="pa-6">
-          <h3 class="a-text-regular text-center">
-            {{ $t('scan.hold_your_device') }}
+        <v-col cols="12" :class="`${classes.root}__hint`">
+          <h3 :class="`${classes.root}__hint-title`">
+            {{ t('scan.hold_your_device') }}
           </h3>
         </v-col>
       </v-row>
 
-      <!-- No Camera -->
+      <!-- No Camera || No access || No stream -->
       <v-row
-        v-if="cameraStatus === 'nocamera'"
+        v-if="
+          cameraStatus === 'nocamera' || cameraStatus === 'noaccess' || cameraStatus === 'nostream'
+        "
         justify="center"
         align="center"
-        class="text-center pa-8"
-        no-gutters
+        :class="`${classes.root}__state`"
+        gap="0"
       >
         <v-col cols="12">
-          <h3 class="a-text-header">
-            {{ $t('scan.no_camera_found') }}
-          </h3>
-          <p class="a-text-regular mt-1 mb-0">
-            {{ $t('scan.connect_camera') }}
-          </p>
+          <template v-if="cameraStatus === 'nocamera'">
+            <h3 :class="`${classes.root}__state-title`">
+              {{ t('scan.no_camera_found') }}
+            </h3>
+            <p :class="`${classes.root}__state-message`">
+              {{ t('scan.connect_camera') }}
+            </p>
+          </template>
+          <template v-else-if="cameraStatus === 'noaccess'">
+            <h3 :class="`${classes.root}__state-title`">
+              {{ t('scan.no_camera_access') }}
+            </h3>
+            <p :class="`${classes.root}__state-message`">
+              {{ t('scan.grant_camera_permissions') }}
+            </p>
+          </template>
+          <template v-else-if="cameraStatus === 'nostream'">
+            <h3 :class="`${classes.root}__state-title`">
+              {{ t('scan.no_camera_stream') }}
+            </h3>
+            <safe-html
+              tag="p"
+              :class="`${classes.root}__state-message`"
+              :html="noStreamDetailsMessage"
+              profile="ui"
+            />
+          </template>
         </v-col>
       </v-row>
 
       <v-divider class="a-divider" />
 
-      <v-card-actions>
+      <v-card-actions :class="`${classes.root}__dialog-actions`">
         <v-spacer />
         <v-btn variant="text" class="a-btn-regular" @click="show = false">
-          {{ $t('scan.close_button') }}
+          {{ t('scan.close_button') }}
         </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 </template>
 
-<script>
-import { Scanner } from '@/lib/zxing'
+<script lang="ts">
+import { computed, defineComponent, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useStore } from 'vuex'
+import type { IScannerControls } from '@zxing/browser'
 
-export default {
+import { Scanner } from '@/lib/zxing'
+import SafeHtml from '@/components/common/SafeHtml'
+import { escapeHtml } from '@/lib/markdown'
+import { mdiCamera } from '@mdi/js'
+import { logger } from '@/utils/devTools/logger'
+import { QRCODE_SCANNER_WAITING_SPINNER_SIZE } from '@/components/Qrcode/helpers/uiMetrics'
+
+const className = 'qrcode-scanner-dialog'
+const classes = {
+  root: className,
+  camera: `${className}__camera`,
+  cameraSelect: `${className}__camera-select`
+}
+
+type CameraStatus = 'waiting' | 'active' | 'nocamera' | 'noaccess' | 'nostream'
+
+export default defineComponent({
+  components: {
+    SafeHtml
+  },
   props: {
     modelValue: {
       type: Boolean,
@@ -86,89 +137,169 @@ export default {
     }
   },
   emits: ['scan', 'update:modelValue'],
-  data: () => ({
-    cameraStatus: 'waiting', // can be: waiting, active, nocamera
-    scanner: null,
-    currentCamera: null,
-    cameras: []
-  }),
-  computed: {
-    className: () => 'qrcode-scanner-dialog',
-    show: {
+  setup(props, { emit }) {
+    const store = useStore()
+    const { t } = useI18n()
+
+    const videoElement = ref<HTMLVideoElement | null>(null)
+    const cameraStatus = ref<CameraStatus>('waiting')
+    const scanner = ref<Scanner | null>(null)
+    const cameras = ref<MediaDeviceInfo[]>([])
+    const currentCamera = ref<number | null>(null)
+    const noStreamDetails = ref<string | null>(null)
+    const scannerControls = ref<IScannerControls | null>(null)
+
+    const show = computed<boolean>({
       get() {
-        return this.modelValue
+        return props.modelValue
       },
       set(value) {
-        this.$emit('update:modelValue', value)
+        emit('update:modelValue', value)
       }
-    }
-  },
-  watch: {
-    cameras(cameras) {
-      if (cameras.length > 0) {
-        const cameraKey = cameras.length === 2 ? 1 : 0
-        this.currentCamera = this.cameras[cameraKey].deviceId
+    })
 
-        this.cameraStatus = 'active'
-      } else {
-        this.cameraStatus = 'nocamera'
-      }
-    },
-    currentCamera() {
-      this.scanner.start(this.currentCamera).then((content) => this.onScan(content))
-    }
-  },
-  mounted() {
-    this.init()
-  },
-  beforeUnmount() {
-    this.destroyScanner()
-  },
-  methods: {
-    init() {
-      return this.initScanner()
-        .then(() => {
-          return this.getCameras()
-        })
-        .catch((err) => {
-          this.cameraStatus = 'nocamera'
-          this.$store.dispatch('snackbar/show', {
-            message: this.$t('scan.something_wrong')
-          })
-          console.error(err)
-        })
-    },
-    async initScanner() {
-      this.scanner = new Scanner({
-        videoElement: this.$refs.camera
+    // The message carries markup from the locale file, so the interpolated browser error
+    // text has to be escaped before it is placed into it.
+    const noStreamDetailsMessage = computed(() =>
+      t('scan.no_stream_details', {
+        noStreamDetails: escapeHtml(noStreamDetails.value ?? '')
       })
+    )
 
-      return this.scanner.init()
-    },
-    destroyScanner() {
-      // First check if the scanner was initialized.
-      // Needed when an unexpected error occurred,
-      // or when the dialog closes before initialization.
-      return this.scanner && this.scanner.stop()
-    },
-    async getCameras() {
-      this.cameras = await this.scanner.getCameras()
-    },
-    onScan(content) {
-      this.$emit('scan', content)
-      this.destroyScanner()
-      this.show = false
+    const init = async () => {
+      try {
+        scanner.value = new Scanner({
+          videoElement: videoElement.value!
+        })
+
+        await scanner.value.init()
+        cameras.value = await scanner.value.getCameras()
+      } catch (error) {
+        cameraStatus.value = 'nocamera'
+        onError(error as Error)
+      }
+    }
+
+    const destroyScanner = () => {
+      if (!scannerControls.value) return
+      return scanner.value?.stop(scannerControls.value)
+    }
+
+    const onScan = (content: string) => {
+      emit('scan', content)
+      destroyScanner()
+      show.value = false
+    }
+
+    const onError = (error: Error) => {
+      store.dispatch('snackbar/show', {
+        message: t('scan.something_wrong')
+      })
+      logger.log('qrcode-scanner-dialog', 'warn', error)
+    }
+
+    watch(cameras, (cameras) => {
+      if (cameras.length > 0) {
+        currentCamera.value = cameras.length >= 2 ? 1 : 0
+
+        cameraStatus.value = 'active'
+      } else {
+        cameraStatus.value = 'nocamera'
+      }
+    })
+
+    watch(currentCamera, () => {
+      void scanner.value?.start(
+        currentCamera.value,
+        (result, _, controls) => {
+          if (result) onScan(result.getText()) // text is private field for zxing/browser
+
+          if (controls) scannerControls.value = controls
+        },
+        (error) => {
+          if (error.name === 'NotAllowedError') {
+            cameraStatus.value = 'noaccess'
+          } else {
+            cameraStatus.value = 'nostream'
+            noStreamDetails.value = `${error.name} ${error.message}`
+          }
+
+          onError(error)
+        }
+      )
+    })
+
+    onMounted(() => {
+      init()
+    })
+
+    onBeforeUnmount(() => {
+      destroyScanner()
+    })
+
+    return {
+      t,
+      cameras,
+      cameraStatus,
+      classes,
+      currentCamera,
+      noStreamDetails,
+      noStreamDetailsMessage,
+      props,
+      QRCODE_SCANNER_WAITING_SPINNER_SIZE,
+      show,
+      videoElement,
+      mdiCamera
     }
   }
-}
+})
 </script>
 
 <style lang="scss" scoped>
+@use '@/assets/styles/components/_secondary-dialog.scss' as secondaryDialog;
+@use '@/assets/styles/themes/adamant/_mixins.scss' as mixins;
+
 .qrcode-scanner-dialog {
+  @include secondaryDialog.a-secondary-dialog-card-frame();
+
+  &__status,
+  &__state {
+    padding: var(--a-space-8) var(--a-space-6);
+  }
+
+  &__waiting-spinner {
+    margin-inline-start: var(--a-space-4);
+  }
+
+  &__hint {
+    padding: var(--a-space-6);
+  }
+
+  &__hint-title,
+  &__state {
+    text-align: center;
+  }
+
+  &__hint-title {
+    @include mixins.a-text-regular();
+  }
+
+  &__status-title,
+  &__state-title {
+    @include mixins.a-text-header();
+    margin: 0;
+  }
+
+  &__state-message {
+    @include mixins.a-text-regular();
+    margin-top: var(--a-space-1);
+    margin-bottom: 0;
+  }
+
   &__camera {
     width: 100%;
-    height: 300px;
-    background-color: #000;
+    height: var(--a-qrcode-scanner-camera-height);
+    background-color: var(--a-color-surface-camera);
     position: relative;
 
     video {
@@ -186,7 +317,7 @@ export default {
     bottom: 0;
     :deep(.v-btn) {
       min-width: auto;
-      padding: 0 8px;
+      padding: 0 var(--a-qrcode-scanner-camera-select-padding-inline);
     }
   }
 }

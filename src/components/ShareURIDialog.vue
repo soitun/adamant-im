@@ -1,25 +1,35 @@
 <template>
-  <v-dialog v-model="show" eager width="320" :class="className">
+  <v-dialog
+    v-model="show"
+    eager
+    width="var(--a-secondary-dialog-width-compact)"
+    :class="classes.root"
+  >
     <v-card>
-      <v-card-title :class="`${className}__dialog-title`" class="a-text-header">
-        {{ $t('home.share_uri', { crypto }) }}
+      <v-card-title :class="classes.dialogTitle">
+        {{ t('home.share_uri', { crypto }) }}
       </v-card-title>
       <v-divider class="a-divider" />
-      <v-card-text class="pa-0">
-        <v-list>
-          <v-list-item @click="copyAddress">
-            <v-list-item-title :class="`${className}__list-item-title`">
-              {{ $t('home.copy_address') }}
+      <v-card-text :class="classes.dialogBody">
+        <v-list bg-color="transparent" :class="classes.list">
+          <v-list-item :class="classes.listItem" @click="copyAddress">
+            <v-list-item-title :class="classes.listItemTitle">
+              {{ t('home.copy_address') }}
             </v-list-item-title>
           </v-list-item>
-          <v-list-item v-if="isADM" @click="copyURI">
-            <v-list-item-title :class="`${className}__list-item-title`">
-              {{ $t('home.copy_uri') }}
+          <v-list-item v-if="isADM" :class="classes.listItem" @click="copyURI">
+            <v-list-item-title :class="classes.listItemTitle">
+              {{ t('home.copy_uri') }}
             </v-list-item-title>
           </v-list-item>
-          <v-list-item @click="openQRCodeRenderer">
-            <v-list-item-title :class="`${className}__list-item-title`">
-              {{ $t('home.show_qr_code') }}
+          <v-list-item :class="classes.listItem" @click="openQRCodeRenderer">
+            <v-list-item-title :class="classes.listItemTitle">
+              {{ t('home.show_qr_code') }}
+            </v-list-item-title>
+          </v-list-item>
+          <v-list-item :class="classes.listItem" @click="openInExplorer">
+            <v-list-item-title :class="classes.listItemTitle">
+              {{ t('home.explorer') }}
             </v-list-item-title>
           </v-list-item>
         </v-list>
@@ -29,82 +39,145 @@
   </v-dialog>
 </template>
 
-<script>
+<script lang="ts">
+import { ref, computed, defineComponent, PropType } from 'vue'
+import { useStore } from 'vuex'
+import { useI18n } from 'vue-i18n'
+
+import { CryptoSymbol, Cryptos, isErc20 } from '@/lib/constants'
+
 import QrcodeRendererDialog from '@/components/QrcodeRendererDialog.vue'
 import copyToClipboard from 'copy-to-clipboard'
 import { generateURI } from '@/lib/uri'
+import { getExplorerAddressUrl } from '@/config/utils'
+import { openExternalLink } from '@/lib/openExternalLink'
 
-export default {
-  components: { QrcodeRendererDialog },
+const className = 'share-uri-dialog'
+const classes = {
+  root: className,
+  dialogTitle: `${className}__dialog-title`,
+  dialogBody: `${className}__dialog-body`,
+  list: `${className}__list`,
+  listItem: `${className}__list-item`,
+  listItemTitle: `${className}__list-item-title`
+}
+
+export default defineComponent({
+  components: {
+    QrcodeRendererDialog
+  },
   props: {
+    modelValue: {
+      type: Boolean,
+      required: true
+    },
     address: {
-      required: true,
-      type: String
+      type: String,
+      required: true
     },
     crypto: {
-      required: true,
-      type: String
+      type: String as PropType<CryptoSymbol>,
+      required: true
     },
     isADM: {
-      required: true,
-      type: Boolean
-    },
-    modelValue: {
-      required: true,
       type: Boolean
     }
   },
   emits: ['update:modelValue'],
-  data: () => ({
-    className: 'share-uri-dialog',
-    showQrcodeRendererDialog: false
-  }),
-  computed: {
-    show: {
+  setup(props, { emit }) {
+    const { t } = useI18n()
+    const store = useStore()
+    const showQrcodeRendererDialog = ref(false)
+
+    const show = computed({
       get() {
-        return this.modelValue
+        return props.modelValue
       },
       set(value) {
-        this.$emit('update:modelValue', value)
+        emit('update:modelValue', value)
       }
-    },
-    uri() {
-      return generateURI(this.crypto, this.address)
+    })
+
+    const uri = computed(() => generateURI(props.crypto, props.address, ''))
+    const isErc = computed(() => isErc20(props.crypto))
+
+    const copyAddress = () => {
+      copyToClipboard(props.address)
+      store.dispatch('snackbar/show', { message: t('home.copied') })
+      show.value = false
     }
-  },
-  methods: {
-    copyAddress() {
-      copyToClipboard(this.address)
-      this.$store.dispatch('snackbar/show', { message: this.$t('home.copied') })
-      this.show = false
-    },
-    copyURI() {
-      copyToClipboard(this.uri)
-      this.$store.dispatch('snackbar/show', { message: this.$t('home.copied') })
-      this.show = false
-    },
-    openQRCodeRenderer() {
-      this.showQrcodeRendererDialog = true
-      this.show = false
+
+    const copyURI = () => {
+      copyToClipboard(uri.value)
+      store.dispatch('snackbar/show', { message: t('home.copied') })
+      show.value = false
+    }
+
+    const openQRCodeRenderer = () => {
+      showQrcodeRendererDialog.value = true
+      show.value = false
+    }
+
+    const openInExplorer = () => {
+      const crypto = isErc.value ? Cryptos.ETH : props.crypto
+      const explorerLink = getExplorerAddressUrl(crypto, props.address)
+      openExternalLink(explorerLink)
+    }
+
+    return {
+      classes,
+      t,
+      showQrcodeRendererDialog,
+      show,
+      uri,
+      isErc,
+      copyAddress,
+      copyURI,
+      openQRCodeRenderer,
+      openInExplorer
     }
   }
-}
+})
 </script>
 
 <style lang="scss">
-@import 'vuetify/_settings.scss';
+@use 'sass:map';
+@use '@/assets/styles/components/_secondary-dialog.scss' as secondaryDialog;
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss' as mixins;
+@use 'vuetify/_settings.scss';
 
 .share-uri-dialog {
+  @include secondaryDialog.a-secondary-dialog-card-frame($is-scoped: false);
+
+  &__dialog-title {
+    @include mixins.a-text-header();
+  }
+
+  &__dialog-body {
+    padding: var(--a-secondary-dialog-content-padding-reset) !important;
+  }
+
+  &__list {
+    background: var(--a-secondary-dialog-list-background);
+    padding-block: var(--a-secondary-dialog-list-padding-block) !important;
+  }
+}
+
+.v-theme--light {
+  .share-uri-dialog {
+    &__dialog-title,
+    &__list-item-title {
+      color: map.get(colors.$adm-colors, 'regular');
+    }
+  }
 }
 
 .v-theme--dark {
   .share-uri-dialog {
-    &__dialog-title {
-      color: map-get($shades, 'white');
-    }
-
+    &__dialog-title,
     &__list-item-title {
-      color: map-get($shades, 'white');
+      color: map.get(settings.$shades, 'white');
     }
   }
 }

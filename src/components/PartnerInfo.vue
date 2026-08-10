@@ -1,15 +1,21 @@
 <template>
-  <v-dialog v-model="show" max-width="360">
+  <v-dialog v-model="show" max-width="var(--a-secondary-dialog-width-info)" :class="className">
     <v-card>
-      <v-card-title :class="`${className}__dialog-title`" class="a-text-header">
-        {{ isMe ? $t('chats.my_qr_code') : $t('chats.partner_info') }}
+      <v-card-title :class="`${className}__dialog-title`">
+        {{ isMe ? t('chats.my_qr_code') : t('chats.partner_info') }}
         <v-spacer />
-        <v-btn variant="text" icon class="close-icon" :size="36" @click="show = false">
-          <v-icon icon="mdi-close" :size="24" />
+        <v-btn
+          variant="text"
+          icon
+          class="close-icon"
+          :size="COMMON_ICON_BUTTON_SIZE"
+          @click="show = false"
+        >
+          <v-icon :icon="mdiClose" :size="COMMON_ICON_SIZE" />
         </v-btn>
       </v-card-title>
       <v-divider class="a-divider" />
-      <v-list lines="two">
+      <v-list bg-color="transparent" lines="two" :class="`${className}__list`">
         <v-list-item>
           <template #prepend>
             <icon-box>
@@ -20,18 +26,18 @@
             {{ address }}
           </v-list-item-title>
           <v-list-item-subtitle :class="`${className}__username`">
-            {{ isMe ? $t('chats.me') : name }}
+            {{ isMe ? t('chats.me') : name }}
           </v-list-item-subtitle>
         </v-list-item>
       </v-list>
-      <v-row align="center" justify="center" class="pb-6" no-gutters>
+      <v-row align="center" justify="center" :class="`${className}__qrcode-row`" gap="0">
         <QrcodeRenderer :logo="logo" :opts="opts" :text="text" />
       </v-row>
     </v-card>
   </v-dialog>
 </template>
 
-<script>
+<script setup lang="ts">
 import ChatAvatar from '@/components/Chat/ChatAvatar.vue'
 import QrcodeRenderer from '@/components/QrcodeRenderer.vue'
 import { Cryptos } from '@/lib/constants'
@@ -39,71 +45,76 @@ import { generateURI } from '@/lib/uri'
 import validateAddress from '@/lib/validateAddress'
 import { isStringEqualCI } from '@/lib/textHelpers'
 import IconBox from '@/components/icons/IconBox.vue'
+import { mdiClose } from '@mdi/js'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { joinUrl } from '@/lib/urlFormatter'
+import { COMMON_ICON_BUTTON_SIZE, COMMON_ICON_SIZE } from '@/components/common/helpers/uiMetrics'
 
-export default {
-  components: {
-    IconBox,
-    ChatAvatar,
-    QrcodeRenderer
+const props = defineProps({
+  address: {
+    type: String,
+    required: true,
+    validator: (v: string) => validateAddress('ADM', v)
   },
-  props: {
-    address: {
-      type: String,
-      required: true,
-      validator: (v) => validateAddress('ADM', v)
-    },
-    name: {
-      type: String,
-      default: ''
-    },
-    modelValue: {
-      type: Boolean,
-      required: true
-    },
-    ownerAddress: {
-      type: String,
-      required: true,
-      validator: (v) => validateAddress('ADM', v)
-    }
+  name: {
+    type: String,
+    default: ''
   },
-  emits: ['update:modelValue'],
-  data() {
-    return {
-      className: 'partner-info-dialog',
-      logo: '/img/adm-qr-invert.png',
-      opts: {
-        scale: 8.8
-      }
-    }
+  modelValue: {
+    type: Boolean,
+    required: true
   },
-  computed: {
-    show: {
-      get() {
-        return this.modelValue
-      },
-      set(value) {
-        this.$emit('update:modelValue', value)
-      }
-    },
-    text() {
-      return this.isMe
-        ? generateURI(Cryptos.ADM, this.ownerAddress)
-        : generateURI(Cryptos.ADM, this.address, this.name)
-    },
-    isMe() {
-      return isStringEqualCI(this.address, this.ownerAddress)
-    }
+  ownerAddress: {
+    type: String,
+    required: true,
+    validator: (v: string) => validateAddress('ADM', v)
   }
-}
+})
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: boolean): void
+}>()
+
+const { t } = useI18n()
+
+const className = 'partner-info-dialog'
+const logo = joinUrl(import.meta.env.BASE_URL, '/img/adm-qr-invert.png')
+const opts = { scale: 8.8 }
+
+const show = computed({
+  get: () => props.modelValue,
+  set: (value) => emit('update:modelValue', value)
+})
+
+const isMe = computed(() => isStringEqualCI(props.address, props.ownerAddress))
+
+const text = computed(() =>
+  isMe.value
+    ? generateURI(Cryptos.ADM, props.ownerAddress)
+    : generateURI(Cryptos.ADM, props.address, props.name)
+)
 </script>
 <style lang="scss" scoped>
-@import '@/assets/styles/settings/_colors.scss';
-@import 'vuetify/_settings.scss';
+@use 'sass:map';
+@use '@/assets/styles/components/_layout-primitives.scss' as layoutPrimitives;
+@use '@/assets/styles/components/_secondary-dialog.scss' as secondaryDialog;
+@use '@/assets/styles/settings/_colors.scss';
+@use 'vuetify/_settings.scss';
 
 .partner-info-dialog {
+  @include secondaryDialog.a-secondary-dialog-card-frame();
+
   &__dialog-title {
-    display: flex;
-    align-items: center;
+    @include secondaryDialog.a-secondary-dialog-title();
+    @include layoutPrimitives.a-flex-align-center();
+  }
+
+  &__list {
+    background: inherit;
+  }
+
+  &__qrcode-row {
+    padding-bottom: var(--a-space-6);
   }
 }
 
@@ -114,15 +125,15 @@ export default {
 .v-theme--dark {
   .partner-info-dialog {
     &__dialog-title {
-      color: map-get($shades, 'white');
+      color: map.get(settings.$shades, 'white');
     }
 
     &__address {
-      color: map-get($shades, 'white');
+      color: map.get(settings.$shades, 'white');
     }
 
     &__username {
-      color: map-get($adm-colors, 'grey-transparent');
+      color: var(--a-color-text-muted-dark);
     }
   }
 }

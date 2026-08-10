@@ -10,6 +10,7 @@ export default (store) => {
   }
   store.commit('nodes/useFastestAdmNode', nodes.adm.useFastest)
   store.commit('nodes/useFastestCoinNode', nodes.btc.useFastest)
+  store.commit('nodes/useFastestIpfsNode', nodes.ipfs.useFastest)
 
   store.subscribe((mutation) => {
     const { type, payload } = mutation
@@ -23,7 +24,10 @@ export default (store) => {
       nodes.dash.setUseFastest(!!payload)
       nodes.doge.setUseFastest(!!payload)
       nodes.eth.setUseFastest(!!payload)
-      nodes.kly.setUseFastest(!!payload)
+    }
+
+    if (type === 'nodes/useFastestIpfsNode') {
+      nodes.ipfs.setUseFastest(!!payload)
     }
 
     if (type === 'nodes/toggle') {

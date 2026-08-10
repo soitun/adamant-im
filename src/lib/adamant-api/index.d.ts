@@ -90,6 +90,21 @@ export type SendMessageParams = {
 }
 export function sendMessage(params: SendMessageParams): Promise<CreateNewChatMessageResponseDto>
 
+export function signChatMessageTransaction(
+  params: SendMessageParams
+): Promise<RegisterChatMessageTransaction>
+
+export function sendSignedTransaction(
+  signedTransaction: RegisterChatMessageTransaction
+): Promise<CreateNewChatMessageResponseDto>
+
+export type EncodedFile = {
+  binary: Uint8Array<ArrayBuffer>
+  nonce: string
+}
+
+export function encodeFile(file: Uint8Array, params: SendMessageParams): Promise<EncodedFile>
+
 export function sendSpecialMessage(
   to: string,
   message: SendMessageParams['message']
@@ -136,9 +151,10 @@ export function getChats(
 ): Promise<{
   count: number
   transactions: Array<DecodedChatMessageTransaction>
+  nodeTimestamp: number
 }>
 
-type DecodedChatMessageTransaction = ChatMessageTransaction & {
+export type DecodedChatMessageTransaction = ChatMessageTransaction & {
   message: string | object
   i18n: boolean
 }
@@ -147,6 +163,19 @@ export function decodeChat(
   transaction: ChatMessageTransaction,
   key: string
 ): DecodedChatMessageTransaction
+
+export function decodeTransaction(
+  transaction: AnyTransaction | QueuedTransaction,
+  address: string
+): DecodedChatMessageTransaction
+
+/** @throws when the node-supplied key does not derive the address it is claimed for */
+export function getVerifiedCounterpartyPublicKey(
+  transaction: AnyTransaction | QueuedTransaction,
+  address: string
+): string
+
+export function cacheVerifiedPublicKey(address: string, publicKey: string): boolean
 
 export function getI18nMessage(message: string, senderId: string): string
 

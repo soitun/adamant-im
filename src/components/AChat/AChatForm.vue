@@ -1,329 +1,458 @@
 <template>
-  <div :class="classes">
+  <div :class="classList">
     <v-divider v-if="showDivider" class="a-chat__divider" />
 
     <slot name="reply-preview" />
+    <slot name="preview-file" />
 
-    <v-textarea
-      ref="messageTextarea"
-      v-model="message"
-      @input="onInput"
-      :placeholder="label"
-      hide-details
-      single-line
-      auto-grow
-      rows="1"
-      max-rows="10"
-      variant="underlined"
-      density="compact"
-      base-color="primary"
-      color="primary"
-      v-on="listeners"
-      :autofocus="isDesktopDevice"
-      @focusin="isInputFocused = true"
-      @focusout="isInputFocused = false"
-    >
-      <template #prepend-inner>
-        <chat-emojis
-          @keydown.capture.esc="closeElement"
-          :open="emojiPickerOpen"
-          @onChange="onToggleEmojiPicker"
-          @get-emoji-picture="emojiPicture"
-        ></chat-emojis>
-      </template>
-      <template v-if="showSendButton" #append-inner>
-        <slot name="append" />
-        <v-icon class="a-chat__send-icon" icon="mdi-send" size="28" />
-      </template>
-    </v-textarea>
-
-    <div v-if="showSendButton" class="a-chat__form-send-area" @click="submitMessage" />
+    <div ref="messageInputRoot">
+      <v-textarea
+        v-model="message"
+        @input="onInput"
+        :placeholder="placeholder"
+        :disabled="shouldDisableInput"
+        hide-details
+        single-line
+        auto-grow
+        :rows="textareaRows"
+        max-rows="10"
+        variant="plain"
+        density="compact"
+        base-color="primary"
+        color="primary"
+        v-on="listeners"
+        :autofocus="isDesktopDevice"
+        @focusin="isInputFocused = true"
+        @focusout="isInputFocused = false"
+      >
+        <template #prepend-inner>
+          <chat-emojis
+            @keydown.capture.esc="closeElement"
+            :open="isEmojiPickerOpen"
+            @onChange="onToggleEmojiPicker"
+            @get-emoji-picture="emojiPicture"
+          ></chat-emojis>
+        </template>
+        <template v-if="showSendButton" #append-inner>
+          <slot name="append" />
+          <v-icon
+            class="a-chat__form-send-area"
+            :class="{ 'a-chat__form-send-area--disabled': isDisabled }"
+            :icon="mdiSend"
+            :size="sendIconSize"
+            :disabled="isDisabled"
+            @click="submitMessage"
+          />
+        </template>
+      </v-textarea>
+    </div>
   </div>
 </template>
 
-<script>
-import { nextTick } from 'vue'
+<script lang="ts" setup>
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import ChatEmojis from '@/components/Chat/ChatEmojis.vue'
 import { isMobile } from '@/lib/display-mobile'
+import { mdiSend } from '@mdi/js'
+import { useChatStateStore } from '@/stores/modal-state'
+import { useStore } from 'vuex'
+import { useI18n } from 'vue-i18n'
+import { VALIDATION_ERRORS } from '@/lib/constants'
+import { getMessageSubmitAction } from '@/components/AChat/helpers/messageInputKeypress'
+import { resetTextareaAutogrow } from '@/components/AChat/helpers/resetTextareaAutogrow'
+import { CHAT_FORM_SEND_ICON_SIZE } from '@/components/AChat/helpers/uiMetrics'
 
-export default {
-  components: { ChatEmojis },
-  props: {
-    partnerId: {
-      default: '',
-      type: String
-    },
-    messageText: {
-      default: '',
-      type: String
-    },
-    showSendButton: {
-      type: Boolean,
-      default: true
-    },
-    sendOnEnter: {
-      type: Boolean,
-      default: true
-    },
-    label: {
-      type: String,
-      default: 'Type a message'
-    },
-    showDivider: {
-      type: Boolean,
-      default: false
-    },
-    /**
-     * Message validator.
-     */
-    validator: {
-      type: Function,
-      required: true
-    }
-  },
-  emits: ['message', 'esc', 'error'],
-  data: () => ({
-    message: '',
-    emojiPickerOpen: false,
-    botCommandIndex: null,
-    botCommandSelectionMode: false,
-    isInputFocused: false
-  }),
-  computed: {
-    isDesktopDevice: () => !isMobile(),
-    className: () => 'a-chat',
-    classes() {
-      return [
-        `${this.className}__form`,
-        {
-          [`${this.className}__form--is-active`]: !!this.message
-        }
-      ]
-    },
-    /**
-     * Processing `ctrl+enter`, `shift + enter` and `enter`
-     */
-    listeners() {
-      return {
-        keypress: (e) => {
-          // on some devices keyCode for CTRL+ENTER is 10
-          // https://bugs.chromium.org/p/chromium/issues/detail?id=79407
-          if (e.keyCode === 13 || e.keyCode === 10) {
-            // Enter || Ctrl+Enter
-            if (this.sendOnEnter) {
-              // add LF and calculate height when CTRL+ENTER or ALT+ENTER or CMD+ENTER (Mac & Windows)
-              // no need to add LF for shiftKey, it will be added automatically
-              if (e.ctrlKey || e.altKey || e.metaKey) {
-                this.addLineFeed()
-                this.calculateInputHeight()
-                return
-              }
+const store = useStore()
+const chatStateStore = useChatStateStore()
+const { t } = useI18n()
 
-              if (!e.shiftKey) {
-                // send message if shiftKey is not pressed
-                e.preventDefault()
-                this.submitMessage()
-              }
-            } else {
-              if (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) {
-                e.preventDefault()
-                this.submitMessage()
-              }
-            }
-          }
-        },
-        keydown: (e) => {
-          if (e.code === 'Escape') {
-            this.$emit('esc')
-          }
-        }
-      }
-    }
-  },
-  mounted() {
-    if (this.messageText) {
-      this.message = this.messageText
-      this.focus()
-    }
-    this.attachKeyCommandListener()
-  },
-  beforeUnmount() {
-    this.destroyKeyCommandListener()
-  },
-  methods: {
-    attachKeyCommandListener() {
-      window.addEventListener('keydown', this.onKeyCommand)
-    },
-    destroyKeyCommandListener() {
-      window.removeEventListener('keydown', this.onKeyCommand)
-    },
-    onKeyCommand: function (event) {
-      if (event.ctrlKey && event.shiftKey && event.code === 'Digit1') {
-        this.openElement()
-      } else if (this.isInputFocused && (event.code === 'ArrowUp' || event.code === 'ArrowDown')) {
-        this.selectCommand(event)
-      } else if (event.key.length === 1) {
-        this.botCommandSelectionMode = false
-        this.botCommandIndex = null
-      }
-    },
-    openElement() {
-      this.emojiPickerOpen = true
-    },
-    closeElement() {
-      this.emojiPickerOpen = false
-      setTimeout(() => this.focus(), 0)
-    },
-    onInput: function () {
-      this.$store.commit('draftMessage/saveMessage', {
-        message: this.message,
-        partnerId: this.partnerId
+const { setEmojiPickerOpen } = chatStateStore
+
+type Props = {
+  partnerId?: string
+  messageText?: string
+  showSendButton?: boolean
+  sendOnEnter?: boolean
+  label?: string
+  shouldDisableInput?: boolean
+  showDivider?: boolean
+  validator: (message: string) => string | false
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  partnerId: '',
+  messageText: '',
+  showSendButton: true,
+  sendOnEnter: true,
+  label: undefined,
+  shouldDisableInput: false,
+  showDivider: false
+})
+
+const emit = defineEmits<{
+  (e: 'message', message: string): void
+  (e: 'esc'): void
+  (e: 'error', error: string): void
+}>()
+
+const message = ref('')
+const botCommandIndex = ref<number | null>(null)
+const botCommandSelectionMode = ref(false)
+const isInputFocused = ref(false)
+const isTextareaHeightSyncScheduled = ref(false)
+const latestInputType = ref('')
+const messageInputRoot = useTemplateRef<HTMLElement | null>('messageInputRoot')
+
+const className = 'a-chat'
+const sendIconSize = CHAT_FORM_SEND_ICON_SIZE
+const maxTextareaRows = 10
+const getMessageLineCount = (value: string) => value.split('\n').length
+const classList = computed(() => [
+  `${className}__form`,
+  {
+    [`${className}__form--is-active`]: !!message.value
+  }
+])
+const textareaRows = computed(() => {
+  const lineBreakRows = message.value.split('\n').length
+
+  return Math.min(maxTextareaRows, Math.max(1, lineBreakRows))
+})
+
+const isEmojiPickerOpen = computed({
+  get: () => chatStateStore.isEmojiPickerOpen,
+  set: setEmojiPickerOpen
+})
+const placeholder = computed(() => props.label ?? t('chats.type_a_message'))
+const isDesktopDevice = !isMobile()
+
+const isDisabled = computed(() => {
+  const error = props.validator(message.value)
+
+  if (
+    error === VALIDATION_ERRORS.NotEnoughFunds ||
+    error === VALIDATION_ERRORS.NotEnoughFundsNewAccount
+  ) {
+    return false
+  }
+
+  return error !== false
+})
+
+const listeners = computed(() => {
+  return {
+    keypress: (e: KeyboardEvent) => {
+      const action = getMessageSubmitAction({
+        keyCode: e.keyCode,
+        sendOnEnter: props.sendOnEnter,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey
       })
-    },
-    emojiPicture(emoji) {
-      const caretPosition = this.$refs.messageTextarea.selectionStart
 
-      let before = this.message.slice(0, caretPosition)
-      const after = this.message.slice(caretPosition)
-      let emojiLength = emoji.length
-
-      if (
-        (before.length > 0 &&
-          !/\s|[[{(\n]/.test(before.slice(-1)) && // Check for a space, newline or parentheses before the emoji
-          !before
-            .slice(-2)
-            .match(
-              /[\p{Emoji_Presentation}\p{Emoji}\p{Emoji_Modifier_Base}\p{Emoji_Component}]/gu
-            )) ||
-        /[\d]/.test(before.slice(-1))
-      ) {
-        before += ' '
-        emojiLength += 1
-      }
-      this.message = before + emoji + after
-      this.closeElement()
-
-      // Set the cursor position to after the newly inserted text
-      const newCaretPosition = caretPosition + emojiLength
-      this.focus()
-      this.$nextTick(() => {
-        this.$refs.messageTextarea.setSelectionRange(newCaretPosition, newCaretPosition)
-      })
-      this.onInput()
-    },
-
-    onToggleEmojiPicker(state) {
-      this.emojiPickerOpen = state
-
-      this.focus()
-    },
-
-    submitMessage() {
-      const error = this.validator(this.message)
-      if (error === false) {
-        if (this.message.startsWith('/')) {
-          this.$store.commit('botCommands/addCommand', {
-            partnerId: this.partnerId,
-            command: this.message.trim(),
-            timestamp: Date.now()
-          })
-        }
-        this.$emit('message', this.message)
-        this.message = ''
-        this.$store.commit('draftMessage/deleteMessage', {
-          message: this.message,
-          partnerId: this.partnerId
-        })
-        this.botCommandIndex = null
-        this.botCommandSelectionMode = false
-      } else {
-        this.$emit('error', error)
-      }
-
-      // Fix textarea height to 1 row after miltiline message send
-      this.calculateInputHeight()
-      this.focus()
-    },
-    calculateInputHeight() {
-      nextTick(this.$refs.messageTextarea.calculateInputHeight)
-    },
-    addLineFeed() {
-      this.message += '\n'
-    },
-    focus() {
-      this.$refs.messageTextarea.focus()
-    },
-    selectCommand(event) {
-      const direction = event.code
-      if (!this.message) {
-        this.botCommandSelectionMode = true
-      }
-      if (!this.botCommandSelectionMode) {
-        return
-      }
-      event.preventDefault()
-      const commands = this.$store.getters['botCommands/getCommandsHistory'](this.partnerId)
-      const maxIndex = commands.length > 0 ? commands.length - 1 : 0
-      if (this.botCommandIndex === null) {
-        if (direction === 'ArrowUp') {
-          this.botCommandIndex = maxIndex
-          this.message = commands[this.botCommandIndex]?.command || ''
-        }
+      if (action === 'linefeed') {
+        addLineFeed()
         return
       }
 
-      if (direction === 'ArrowUp') {
-        if (this.botCommandIndex > 0) {
-          this.botCommandIndex--
-          this.message = commands[this.botCommandIndex]?.command || ''
-        }
-        return
+      if (action === 'send') {
+        e.preventDefault()
+        submitMessage()
       }
+    },
+    keydown: (e: KeyboardEvent) => {
+      if (e.code === 'Escape') {
+        if (isInputFocused.value) {
+          e.preventDefault()
+          e.stopPropagation()
+          getTextareaElement()?.blur()
+          return
+        }
 
-      if (this.botCommandIndex < maxIndex) {
-        this.botCommandIndex++
-        this.message = commands[this.botCommandIndex]?.command || ''
+        emit('esc')
       }
     }
   }
+})
+
+onMounted(() => {
+  if (props.messageText) {
+    message.value = props.messageText
+    focus()
+  }
+  attachKeyCommandListener()
+})
+
+onBeforeUnmount(() => {
+  destroyKeyCommandListener()
+})
+
+watch(
+  () => props.shouldDisableInput,
+  (newVal) => {
+    nextTick(() => {
+      if (!newVal && !isInputFocused.value) {
+        focus()
+      }
+    })
+  }
+)
+
+watch(
+  () => message.value,
+  (nextValue, previousValue) => {
+    const isDeleteInput = latestInputType.value.startsWith('delete')
+    const hasCollapsedToEmptySecondLineAfterDelete =
+      isDeleteInput &&
+      getMessageLineCount(previousValue) === 2 &&
+      getMessageLineCount(nextValue) === 2 &&
+      !previousValue.endsWith('\n') &&
+      nextValue.endsWith('\n')
+
+    if (hasCollapsedToEmptySecondLineAfterDelete) {
+      // When deleting content from `line1\nline2`, browsers often keep an extra trailing
+      // line break (`line1\n`). Collapse only this specific shape.
+      // Do not collapse `line1\n\n -> line1\n`, otherwise one delete removes two lines.
+      latestInputType.value = ''
+      message.value = nextValue.slice(0, -1)
+      return
+    }
+
+    if (getMessageLineCount(nextValue) < getMessageLineCount(previousValue)) {
+      scheduleTextareaHeightSync()
+    }
+
+    latestInputType.value = ''
+  }
+)
+
+const attachKeyCommandListener = () => {
+  window.addEventListener('keydown', onKeyCommand)
 }
+
+const destroyKeyCommandListener = () => {
+  window.removeEventListener('keydown', onKeyCommand)
+}
+
+const onKeyCommand = (event: KeyboardEvent) => {
+  if (event.ctrlKey && event.shiftKey && event.code === 'Digit1') {
+    openElement()
+  } else if (isInputFocused.value && (event.code === 'ArrowUp' || event.code === 'ArrowDown')) {
+    selectCommand(event)
+  } else if (event.key.length === 1) {
+    botCommandSelectionMode.value = false
+    botCommandIndex.value = null
+  }
+}
+
+const openElement = () => {
+  isEmojiPickerOpen.value = true
+}
+
+const closeElement = () => {
+  isEmojiPickerOpen.value = false
+  setTimeout(() => focus(), 0)
+}
+
+const getTextareaElement = () => {
+  return messageInputRoot.value?.querySelector('textarea') ?? null
+}
+
+const resetTextareaControlHeight = () => {
+  const textareaField = messageInputRoot.value?.querySelector('.v-field')
+
+  if (textareaField instanceof HTMLElement) {
+    textareaField.style.removeProperty('--v-textarea-control-height')
+  }
+}
+
+const scheduleTextareaHeightSync = () => {
+  if (isTextareaHeightSyncScheduled.value) {
+    return
+  }
+
+  isTextareaHeightSyncScheduled.value = true
+
+  const syncTextareaHeight = () => {
+    resetTextareaControlHeight()
+    resetTextareaAutogrow(messageInputRoot.value)
+  }
+
+  nextTick(() => {
+    syncTextareaHeight()
+
+    // Vuetify auto-grow may re-apply control height after Vue updates.
+    // Second pass on the next frame stabilizes the final height.
+    requestAnimationFrame(() => {
+      syncTextareaHeight()
+      isTextareaHeightSyncScheduled.value = false
+    })
+  })
+}
+
+const onInput = (event?: Event) => {
+  const inputEvent = event as InputEvent | undefined
+  latestInputType.value = inputEvent?.inputType ?? ''
+
+  store.commit('draftMessage/saveMessage', {
+    message: message.value,
+    partnerId: props.partnerId
+  })
+}
+
+const emojiPicture = (emoji: string) => {
+  const textareaElement = getTextareaElement()
+  const caretPosition = textareaElement?.selectionStart ?? undefined
+
+  let before = message.value.slice(0, caretPosition)
+  const after = message.value.slice(caretPosition)
+  let emojiLength = emoji.length
+
+  if (
+    (before.length > 0 &&
+      !/\s|[[{(\n]/.test(before.slice(-1)) && // Check for a space, newline or parentheses before the emoji
+      !before
+        .slice(-2)
+        .match(/[\p{Emoji_Presentation}\p{Emoji}\p{Emoji_Modifier_Base}\p{Emoji_Component}]/gu)) ||
+    /[\d]/.test(before.slice(-1))
+  ) {
+    before += ' '
+    emojiLength += 1
+  }
+  message.value = before + emoji + after
+  closeElement()
+
+  // Set the cursor position to after the newly inserted text
+  const newCaretPosition = (caretPosition || 0) + emojiLength
+  focus()
+  nextTick(() => {
+    textareaElement?.setSelectionRange(newCaretPosition, newCaretPosition)
+  })
+  onInput()
+}
+
+const onToggleEmojiPicker = (state: boolean) => {
+  isEmojiPickerOpen.value = state
+
+  focus()
+}
+
+const submitMessage = () => {
+  const error = props.validator(message.value)
+  if (error === false) {
+    if (message.value.startsWith('/')) {
+      store.commit('botCommands/addCommand', {
+        partnerId: props.partnerId,
+        command: message.value.trim(),
+        timestamp: Date.now()
+      })
+    }
+    emit('message', message.value)
+    message.value = ''
+    scheduleTextareaHeightSync()
+    store.commit('draftMessage/deleteMessage', {
+      message: message.value,
+      partnerId: props.partnerId
+    })
+    botCommandIndex.value = null
+    botCommandSelectionMode.value = false
+  } else {
+    emit('error', error)
+  }
+
+  nextTick(() => {
+    focus()
+  })
+}
+
+const addLineFeed = () => {
+  message.value += '\n'
+}
+
+const focus = () => {
+  getTextareaElement()?.focus()
+}
+
+const selectCommand = (event: KeyboardEvent) => {
+  const direction = event.code
+  if (!message.value) {
+    botCommandSelectionMode.value = true
+  }
+  if (!botCommandSelectionMode.value) {
+    return
+  }
+  event.preventDefault()
+  const commands = store.getters['botCommands/getCommandsHistory'](props.partnerId)
+  const maxIndex = commands.length > 0 ? commands.length - 1 : 0
+  if (botCommandIndex.value === null) {
+    if (direction === 'ArrowUp') {
+      botCommandIndex.value = maxIndex
+      message.value = commands[botCommandIndex.value]?.command || ''
+    }
+    return
+  }
+
+  if (direction === 'ArrowUp') {
+    if (botCommandIndex.value > 0) {
+      botCommandIndex.value--
+      message.value = commands[botCommandIndex.value]?.command || ''
+    }
+    return
+  }
+
+  if (botCommandIndex.value < maxIndex) {
+    botCommandIndex.value++
+    message.value = commands[botCommandIndex.value]?.command || ''
+  }
+}
+
+defineExpose({
+  focus
+})
 </script>
 
 <style lang="scss" scoped>
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/components/_layout-primitives.scss' as layoutPrimitives;
+@use '@/assets/styles/settings/_colors.scss';
+@use 'vuetify/settings';
 
 /**
  * 1. Limit height of message form.
  * 2. Align icons at the bottom.
  */
 .a-chat__form {
+  --a-chat-send-color: #{map.get(settings.$shades, 'white')};
+  --a-chat-send-color-disabled: var(--a-color-text-muted-light);
+  --a-chat-form-prepend-offset-y: var(--a-chat-form-prepend-offset-y);
+  --a-chat-form-prepend-offset-inline: var(--a-chat-form-prepend-offset-inline);
+  --a-chat-form-send-hit-size: var(--a-chat-form-send-hit-size);
+
   :deep(.v-text-field__slot) textarea {
-    max-height: 230px;
+    max-height: var(--a-chat-form-max-height);
     overflow-y: auto;
   }
+
   :deep(.v-text-field) {
     align-items: flex-end;
   }
   :deep(.v-textarea) {
     .v-input__prepend {
-      margin-bottom: 2px;
-      margin-inline-end: 9px;
+      margin-bottom: var(--a-chat-form-prepend-offset-y);
+      margin-inline-end: var(--a-chat-form-prepend-offset-inline);
       padding-top: 0;
     }
     .v-field__append-inner,
     .v-field__prepend-inner {
       margin-top: auto;
       padding-top: 0;
-      margin-bottom: 4px;
+      margin-bottom: var(--a-space-1);
     }
     .v-field__prepend-inner > .v-icon,
     .v-field__append-inner > .v-icon,
     .v-field__clearable > .v-icon {
       --v-medium-emphasis-opacity: 1;
-    }
-    .v-input__control {
-      margin-bottom: 2px;
     }
     .v-field__input {
       &::placeholder {
@@ -340,23 +469,62 @@ export default {
   width: 100%;
 }
 
+.a-chat__form {
+  :deep(.v-field__append-inner) {
+    @include layoutPrimitives.a-flex-align-center();
+  }
+}
+
 .a-chat__form-send-area {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 50px;
-  height: 50px;
-  cursor: pointer;
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--a-chat-form-send-hit-size);
+    height: var(--a-chat-form-send-hit-size);
+    background: currentColor;
+    border-radius: var(--a-radius-round);
+    opacity: 0;
+    transform: translate(-50%, -50%);
+    transition: opacity var(--a-motion-slow) var(--a-ease-standard);
+    z-index: -1;
+  }
+
+  &:hover::before {
+    opacity: 0.1;
+  }
+
+  color: var(--a-chat-send-color);
+
+  &--disabled {
+    color: var(--a-chat-send-color-disabled);
+  }
+
+  &.v-icon--disabled {
+    opacity: 1;
+  }
+
+  &:hover {
+    color: map.get(colors.$adm-colors, 'primary');
+  }
 }
 
 .v-theme--light {
   .a-chat__form {
+    --a-chat-send-color: #{map.get(settings.$shades, 'black')};
+    --a-chat-send-color-disabled: var(--a-color-text-muted-light);
+  }
+
+  .a-chat__form {
     :deep(.v-textarea) {
       .v-field__input {
-        caret-color: map-get($adm-colors, 'primary');
+        caret-color: map.get(colors.$adm-colors, 'primary');
 
         &::placeholder {
-          color: map-get($adm-colors, 'muted');
+          color: var(--a-color-text-muted-light);
         }
       }
     }
@@ -365,12 +533,17 @@ export default {
 
 .v-theme--dark {
   .a-chat__form {
+    --a-chat-send-color: #{map.get(settings.$shades, 'white')};
+    --a-chat-send-color-disabled: #{rgba(map.get(settings.$shades, 'white'), 0.6)};
+  }
+
+  .a-chat__form {
     :deep(.v-textarea) {
       .v-field__input {
-        caret-color: map-get($adm-colors, 'primary');
+        caret-color: map.get(colors.$adm-colors, 'primary');
 
         &::placeholder {
-          color: rgba(map-get($shades, 'white'), 70%);
+          color: rgba(map.get(settings.$shades, 'white'), 70%);
         }
       }
     }

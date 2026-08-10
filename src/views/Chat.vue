@@ -1,7 +1,8 @@
 <template>
-  <v-row justify="center" no-gutters>
+  <v-row justify="center" gap="0" class="chat-view">
     <container>
       <chat
+        :key="partnerId"
         :message-text="messageText"
         :partner-id="partnerId"
         @click:chat-avatar="onClickChatAvatar"
@@ -9,22 +10,26 @@
 
       <PartnerInfo
         v-if="contactAddress"
-        v-model="show"
+        v-model="isShowPartnerInfoDialog"
         :address="contactAddress"
         :name="contactName"
         :owner-address="address"
       />
 
-      <ProgressIndicator :show="!isFulfilled" />
+      <ProgressIndicator v-if="!isFulfilled" :show-spinner="isMobileView" />
     </container>
   </v-row>
 </template>
 
 <script>
+import { computed } from 'vue'
+
 import Chat from '@/components/Chat/Chat.vue'
 import PartnerInfo from '@/components/PartnerInfo.vue'
-import ProgressIndicator from '@/components/ProgressIndicator.vue'
 import partnerName from '@/mixins/partnerName'
+import ProgressIndicator from '@/components/ProgressIndicator.vue'
+import { useScreenSize } from '@/hooks/useScreenSize'
+import { useChatStateStore } from '@/stores/modal-state'
 
 export default {
   components: {
@@ -43,8 +48,29 @@ export default {
       type: String
     }
   },
+  setup() {
+    const { isMobileView } = useScreenSize()
+
+    const chatStateStore = useChatStateStore()
+
+    const { setShowPartnerInfoDialog } = chatStateStore
+
+    const isShowPartnerInfoDialog = computed({
+      get() {
+        return chatStateStore.isShowPartnerInfoDialog
+      },
+      set(value) {
+        setShowPartnerInfoDialog(value)
+      }
+    })
+
+    return {
+      isMobileView,
+      isShowPartnerInfoDialog,
+      setShowPartnerInfoDialog
+    }
+  },
   data: () => ({
-    show: false,
     contactAddress: '',
     contactName: ''
   }),
@@ -63,8 +89,15 @@ export default {
     onClickChatAvatar(address) {
       this.contactAddress = address
       this.contactName = this.getPartnerName(address)
-      this.show = true
+      this.setShowPartnerInfoDialog(true)
     }
   }
 }
 </script>
+
+<style scoped lang="scss">
+.chat-view {
+  width: 100%;
+  margin: 0;
+}
+</style>

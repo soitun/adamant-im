@@ -3,7 +3,8 @@ import { useI18n, VueI18nTranslation } from 'vue-i18n'
 
 import { NodeStatusResult } from '@/lib/nodes/abstract.node'
 import { NodeStatus } from '@/lib/nodes/types'
-import { formatHeight } from '@/components/nodes/utils/formatHeight'
+
+import { mdiCubeOutline } from '@mdi/js'
 
 type StatusColor = 'green' | 'red' | 'grey' | 'orange'
 type NodeStatusDetail = {
@@ -14,20 +15,40 @@ type NodeStatusDetail = {
   icon?: string
 }
 
-function getNodeStatusTitle(node: NodeStatusResult, t: VueI18nTranslation) {
+export function isNodeStatusUpdating(node: NodeStatusResult) {
+  return node.active && node.isUpdating
+}
+
+export function getNodeStatusTitle(node: NodeStatusResult, t: VueI18nTranslation) {
+  if (!node.active) {
+    return t('nodes.inactive')
+  }
+
+  if (isNodeStatusUpdating(node)) {
+    return t('nodes.updating')
+  }
+
+  if (!node.hasSupportedProtocol) {
+    return t('nodes.unsupported')
+  }
+
   const i18n: Record<NodeStatus, string> = {
-    online: node.ping + ' ',
+    online: node.ping + '\u00A0',
     offline: 'nodes.offline',
     disabled: 'nodes.inactive',
     sync: 'nodes.sync',
     unsupported_version: 'nodes.unsupported'
   }
-  const i18nKey = i18n[node.status]
 
-  return t(i18nKey)
+  if (node.status === 'online') {
+    return i18n[node.status]
+  } else {
+    const i18nKey = i18n[node.status]
+    return t(i18nKey)
+  }
 }
 
-function getNodeStatusDetail(
+export function getNodeStatusDetail(
   node: NodeStatusResult,
   t: VueI18nTranslation
 ): NodeStatusDetail | null {
@@ -35,25 +56,41 @@ function getNodeStatusDetail(
     return null
   }
 
+  if (isNodeStatusUpdating(node)) {
+    return null
+  }
+
+  if (!node.hasSupportedProtocol) {
+    return {
+      text: t('nodes.unsupported_reason_protocol')
+    }
+  }
+
+  if (!node.online) {
+    return null
+  }
+
   if (!node.hasMinNodeVersion) {
     return {
       text: t('nodes.unsupported_reason_api_version')
     }
-  } else if (!node.hasSupportedProtocol) {
+  }
+
+  if (node.online) {
     return {
-      text: t('nodes.unsupported_reason_protocol')
-    }
-  } else if (node.online) {
-    return {
-      text: formatHeight(node.height),
-      icon: 'mdi-cube-outline'
+      text: node.formattedHeight,
+      icon: mdiCubeOutline
     }
   }
 
   return null
 }
 
-function getNodeStatusColor(node: NodeStatusResult) {
+export function getNodeStatusColor(node: NodeStatusResult) {
+  if (isNodeStatusUpdating(node)) {
+    return 'grey'
+  }
+
   const statusColorMap: Record<NodeStatus, StatusColor> = {
     online: 'green',
     unsupported_version: 'red',
@@ -69,6 +106,7 @@ type UseNodeStatusResult = {
   nodeStatusTitle: Ref<string>
   nodeStatusDetail: Ref<NodeStatusDetail | null>
   nodeStatusColor: Ref<StatusColor>
+  nodeStatusUpdating: Ref<boolean>
 }
 
 export function useNodeStatus(node: Ref<NodeStatusResult>): UseNodeStatusResult {
@@ -77,10 +115,12 @@ export function useNodeStatus(node: Ref<NodeStatusResult>): UseNodeStatusResult 
   const nodeStatusTitle = computed(() => getNodeStatusTitle(node.value, t))
   const nodeStatusDetail = computed(() => getNodeStatusDetail(node.value, t))
   const nodeStatusColor = computed(() => getNodeStatusColor(node.value))
+  const nodeStatusUpdating = computed(() => isNodeStatusUpdating(node.value))
 
   return {
     nodeStatusTitle,
     nodeStatusDetail,
-    nodeStatusColor
+    nodeStatusColor,
+    nodeStatusUpdating
   }
 }

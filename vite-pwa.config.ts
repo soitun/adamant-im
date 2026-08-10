@@ -1,8 +1,11 @@
 import { mergeConfig, defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
-import viteBaseConfig from './vite-base.config'
-import { manifest } from './vite-config/manifest'
+import viteBaseConfig from './vite-base.config.ts'
+import { manifest } from './vite-config/manifest.ts'
+
+const useHttps = process.env.HTTPS === 'true'
 
 export default mergeConfig(
   viteBaseConfig,
@@ -18,9 +21,11 @@ export default mergeConfig(
         manifest: manifest,
         manifestFilename: 'manifest.json',
         workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
           maximumFileSizeToCacheInBytes: 5000000 // 5 MiB
         }
-      })
+      }),
+      ...(useHttps ? [basicSsl()] : [])
     ]
   })
 )

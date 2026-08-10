@@ -1,35 +1,43 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv, type UserConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import vueJsx from '@vitejs/plugin-vue-jsx'
 import wasm from 'vite-plugin-wasm'
-import topLevelAwait from 'vite-plugin-top-level-await'
-import path from 'path'
+import path from 'node:path'
 import autoprefixer from 'autoprefixer'
-import inject from '@rollup/plugin-inject'
-import commonjs from '@rollup/plugin-commonjs'
+import { fileURLToPath } from 'node:url'
 
-import { deferScripsPlugin } from './vite-config/plugins/deferScriptsPlugin'
-import { preloadCSSPlugin } from './vite-config/plugins/preloadCSSPlugin'
-import { excludeBip39Wordlists } from './vite-config/rollup/excludeBip39Wordlists'
+import { deferScripsPlugin } from './vite-config/plugins/deferScriptsPlugin.ts'
+import { preloadCSSPlugin } from './vite-config/plugins/preloadCSSPlugin.ts'
+import { ecpairBufferImportPlugin } from './vite-config/plugins/ecpairBufferImportPlugin.ts'
+import { cspHardeningPlugin } from './vite-config/plugins/cspHardeningPlugin.ts'
+import VueDevTools from 'vite-plugin-vue-devtools'
+
+const env = loadEnv('production', process.cwd())
+const basePublicPath = env.VITE_PUBLIC_PATH || '/'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 export default defineConfig({
+  base: basePublicPath,
   plugins: [
+    cspHardeningPlugin(),
     wasm(),
-    topLevelAwait(),
+    ecpairBufferImportPlugin(),
+    process.env.VITE_DISABLE_DEVTOOLS === '1' ? undefined : VueDevTools(),
     vue(),
-    commonjs(),
-    inject({
-      Buffer: ['buffer', 'Buffer']
-    }),
+    vueJsx(),
     deferScripsPlugin(),
     preloadCSSPlugin()
   ],
   css: {
+    preprocessorMaxWorkers: 0,
     postcss: {
       plugins: [autoprefixer()]
     },
     preprocessorOptions: {
       scss: {
-        includePaths: ['./src']
+        loadPaths: ['./src']
       }
     }
   },
@@ -39,37 +47,67 @@ export default defineConfig({
 
       // Node.js polyfills
       buffer: 'buffer/',
-      events: 'rollup-plugin-node-polyfills/polyfills/events',
+      events: 'events/',
+      process: 'process/browser',
       stream: 'stream-browserify',
+      util: 'util/',
       path: 'path-browserify',
-      crypto: 'crypto-browserify',
-      http: 'stream-http',
-      https: 'https-browserify',
-      os: 'os-browserify/browser',
-      assert: 'assert'
+      vm: path.resolve(__dirname, './src/lib/polyfills/vm.js'),
+      setimmediate: path.resolve(__dirname, './src/lib/polyfills/setImmediate.js')
     },
-    extensions: ['.ts', '.js', '.json', '.vue']
+    extensions: ['.tsx', '.ts', '.js', '.json', '.vue']
   },
   server: {
-    port: 8080
+    port: process.env.HTTPS === 'true' ? 5173 : 8080,
+    https: process.env.HTTPS === 'true' ? {} : undefined
   },
+  // Some old libs like `promise-queue` and `readable-stream` still uses Webpack.
   define: {
-    'process.env': {} // some old libs like `promise-queue` still uses Webpack
+    global: 'globalThis',
+    'process.browser': 'true',
+    'process.env': {}
   },
   optimizeDeps: {
-    esbuildOptions: {
-      // Node.js global to browser globalThis
-      define: {
-        global: 'globalThis'
+    include: ['buffer', 'process'],
+    rolldownOptions: {
+      transform: {
+        define: {
+          global: 'globalThis'
+        },
+        inject: {
+          Buffer: ['buffer', 'Buffer'],
+          process: 'process'
+        }
       }
     }
   },
   build: {
-    commonjsOptions: {
-      include: []
-    },
+    target: 'esnext',
+    // Current app bundles include heavy crypto/runtime chunks by design.
+    // Keep build output clean from non-actionable size warnings.
+    chunkSizeWarningLimit: 4000,
     rollupOptions: {
-      external: [...excludeBip39Wordlists()]
+      output: {
+        assetFileNames: (assetInfo) => {
+          if (assetInfo.name?.startsWith('materialdesignicons-webfont')) {
+            return 'assets/[name][extname]'
+          }
+
+          return 'assets/[name]-[hash][extname]'
+        }
+      }
+    }
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    css: {
+      include: [/.+/]
+    },
+    server: {
+      deps: {
+        inline: ['vuetify']
+      }
     }
   }
-})
+}) as UserConfig

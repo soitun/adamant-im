@@ -1,0 +1,45 @@
+name: Quality
+
+on:
+  pull_request:
+    types:
+      - opened
+      - ready_for_review
+      - reopened
+      - synchronize
+  push:
+    branches:
+      - dev
+      - master
+  workflow_dispatch:
+
+# @see https://typicode.github.io/husky/how-to.html#ci-server-and-docker
+env:
+  HUSKY: 0
+
+jobs:
+  check:
+    name: Lint, typecheck and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository 🛎️
+        uses: actions/checkout@v7
+      - name: Setup Node.js 🍀
+        uses: ./.github/actions/setup-node
+      - name: Install dependencies 📦
+        run: npm ci
+      - name: Run ESLint 🛠️
+        run: npm run lint
+
+      - name: Verify ESLint produced no changes
+        run: git diff --exit-code
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm run test -- --run
+
+      - name: Build production PWA and enforce CSP gate
+        run: npm run build

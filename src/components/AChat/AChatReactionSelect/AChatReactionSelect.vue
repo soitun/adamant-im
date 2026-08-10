@@ -16,9 +16,9 @@
         :class="classes.moreButton"
         @click="$emit('click:emojiPicker')"
         :elevation="0"
-        :size="32"
+        :size="COMMON_REACTION_MORE_BUTTON_SIZE"
       >
-        <v-icon icon="mdi-chevron-down" :size="24" />
+        <v-icon :icon="mdiChevronDown" :size="COMMON_ICON_SIZE" />
       </v-btn>
     </div>
   </div>
@@ -32,6 +32,11 @@ import { useStore } from 'vuex'
 import { usePartnerId } from '@/components/AChat/hooks/usePartnerId'
 import { isEmptyReaction, NormalizedChatMessageTransaction } from '@/lib/chat/helpers'
 import AChatReactionSelectItem from './AChatReactionSelectItem.vue'
+import { mdiChevronDown } from '@mdi/js'
+import {
+  COMMON_ICON_SIZE,
+  COMMON_REACTION_MORE_BUTTON_SIZE
+} from '@/components/common/helpers/uiMetrics'
 
 const className = 'a-chat-reaction-select'
 const classes = {
@@ -87,8 +92,11 @@ export default defineComponent({
 
     return {
       classes,
+      COMMON_ICON_SIZE,
+      COMMON_REACTION_MORE_BUTTON_SIZE,
       emojis,
       lastReaction,
+      mdiChevronDown,
       onReact
     }
   }
@@ -96,42 +104,40 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/components/_chat-action-surface.scss' as chatActionSurface;
+@use '@/assets/styles/settings/_colors.scss';
+@use 'vuetify/settings';
 
 .a-chat-reaction-select {
-  border-radius: 16px;
+  @include chatActionSurface.a-chat-action-surface(var(--a-radius-md));
   cursor: pointer;
   user-select: none;
 
   &__predefined-reactions {
     display: flex;
     align-items: center;
-    padding: 4px;
+    padding: var(--a-space-1);
   }
 
   &__more-button {
+    color: inherit;
+    background-color: transparent !important;
   }
 }
 
 .v-theme--light {
   .a-chat-reaction-select {
-    background-color: map-get($shades, 'white');
-    border: 1px solid map-get($adm-colors, 'secondary2');
-
     &__more-button {
-      color: map-get($shades, 'black');
-      background-color: map-get($adm-colors, 'grey-transparent');
+      color: map.get(settings.$shades, 'black');
     }
   }
 }
 
 .v-theme--dark {
   .a-chat-reaction-select {
-    background-color: map-get($adm-colors, 'regular');
-
     &__more-button {
-      background-color: map-get($adm-colors, 'secondary2-slightly-transparent');
+      color: map.get(settings.$shades, 'white');
     }
   }
 }

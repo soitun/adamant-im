@@ -1,4 +1,9 @@
 import { ManifestOptions } from 'vite-plugin-pwa'
+import { joinUrl } from '../src/lib/urlFormatter.ts'
+import { loadEnv } from 'vite'
+
+const env = loadEnv('production', process.cwd())
+const BASE = env.VITE_PUBLIC_PATH || '/'
 
 export const manifest: Partial<ManifestOptions> = {
   name: 'ADAMANT Messenger',
@@ -7,53 +12,53 @@ export const manifest: Partial<ManifestOptions> = {
     'ADAMANT is a decentralized anonymous messenger based on the blockchain system. It’s independent of any governments or corporations, and even developers due to the distributed network infrastructure that contains an open-source code.',
   icons: [
     {
-      src: '/img/icons/android-chrome-36x36.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-36x36.png'),
       sizes: '36x36',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-48x48.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-48x48.png'),
       sizes: '48x48',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-72x72.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-72x72.png'),
       sizes: '72x72',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-96x96.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-96x96.png'),
       sizes: '96x96',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-144x144.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-144x144.png'),
       sizes: '144x144',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-192x192.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-192x192.png'),
       sizes: '192x192',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-256x256.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-256x256.png'),
       sizes: '256x256',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-384x384.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-384x384.png'),
       sizes: '384x384',
       type: 'image/png'
     },
     {
-      src: '/img/icons/android-chrome-512x512.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-512x512.png'),
       sizes: '512x512',
       type: 'image/png',
       purpose: 'any'
     },
     {
-      src: '/img/icons/android-chrome-1024x1024.png',
+      src: joinUrl(BASE, 'img/icons/android-chrome-1024x1024.png'),
       sizes: '1024x1024',
       type: 'image/png'
     }
@@ -81,7 +86,7 @@ export const manifest: Partial<ManifestOptions> = {
       url: '/home',
       icons: [
         {
-          src: '/img/icons/android-chrome-96x96.png',
+          src: joinUrl(BASE, 'img/icons/android-chrome-96x96.png'),
           sizes: '96x96',
           type: 'image/png'
         }
@@ -92,7 +97,7 @@ export const manifest: Partial<ManifestOptions> = {
       url: '/chats',
       icons: [
         {
-          src: '/img/icons/android-chrome-96x96.png',
+          src: joinUrl(BASE, 'img/icons/android-chrome-96x96.png'),
           sizes: '96x96',
           type: 'image/png'
         }
@@ -103,7 +108,7 @@ export const manifest: Partial<ManifestOptions> = {
       url: '/options',
       icons: [
         {
-          src: '/img/icons/android-chrome-96x96.png',
+          src: joinUrl(BASE, 'img/icons/android-chrome-96x96.png'),
           sizes: '96x96',
           type: 'image/png'
         }
@@ -113,5 +118,224 @@ export const manifest: Partial<ManifestOptions> = {
   scope: 'https://msg.adamant.im',
   categories: ['finance', 'social', 'crypto', 'security', 'blockchain'],
   background_color: '#000000',
-  theme_color: '#4DBA87'
+  theme_color: '#4DBA87',
+
+  screenshots: [
+    {
+      src: joinUrl(BASE, 'screenshots/android/0-login.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Login with password',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/screenshot-mobile.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Login',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/1-balances.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Account balance',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/2-exchanges.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Adamant exchanges',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/3-send_funds.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Send funds',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/4-partners.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: "Partner's info",
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/5-start_new_chat.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Start new chat',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/6-nodes.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Nodes list',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/android/7-votes.png'),
+      sizes: '1334x750',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Votes',
+      platform: 'android'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS1.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Chats in light theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS2.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Chats in dark theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS3.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Adamant exchanges in dark theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS4.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Adamant exchanges in light theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS5.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Account balance in light theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS6.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Account balance in dark theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS7.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Send funds in dark theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS8.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Send funds in light theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS9.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Wallet list in light theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS10.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'Wallet list in dark theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS11.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'List of nodes in dark theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/ios/iOS12.png'),
+      sizes: '1125x2436',
+      type: 'image/png',
+      form_factor: 'narrow',
+      label: 'List of nodes in light theme',
+      platform: 'ios'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/pwa/pwa1.png'),
+      sizes: '1280x800',
+      type: 'image/png',
+      form_factor: 'wide',
+      label: 'Login',
+      platform: 'chromeos'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/pwa/pwa2.png'),
+      sizes: '2255x1280',
+      type: 'image/png',
+      form_factor: 'wide',
+      label: 'Adamant exchanges',
+      platform: 'chromeos'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/pwa/pwa3.png'),
+      sizes: '2255x1280',
+      type: 'image/png',
+      form_factor: 'wide',
+      label: 'Send funds',
+      platform: 'chromeos'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/pwa/pwa4.png'),
+      sizes: '2255x1280',
+      type: 'image/png',
+      form_factor: 'wide',
+      label: 'Account balances',
+      platform: 'chromeos'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/pwa/pwa5.png'),
+      sizes: '2255x1280',
+      type: 'image/png',
+      form_factor: 'wide',
+      label: 'Wallet list',
+      platform: 'chromeos'
+    },
+    {
+      src: joinUrl(BASE, 'screenshots/pwa/pwa6.png'),
+      sizes: '2255x1280',
+      type: 'image/png',
+      form_factor: 'wide',
+      label: 'Start a new chat',
+      platform: 'chromeos'
+    }
+  ]
 }

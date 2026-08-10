@@ -1,22 +1,28 @@
 <template>
-  <div class="a-chat">
-    <div class="a-chat__content">
+  <div :class="classes.root">
+    <div :class="classes.content">
       <slot name="header" />
 
       <v-divider />
 
-      <div class="a-chat__body">
-        <div class="text-center py-2">
+      <div :class="classes.body" ref="bodyRef">
+        <div
+          v-show="loading && !isWelcomeChat(partnerId)"
+          :class="classes.spinnerWrapper"
+          :style="{ top: spinnerTop + 'px' }"
+        >
           <v-progress-circular
-            v-show="loading"
             indeterminate
-            color="primary"
-            size="24"
-            style="z-index: 100"
+            :size="CHAT_CONNECTION_SPINNER_SIZE"
+            :class="classes.spinner"
           />
         </div>
 
-        <div ref="messages" class="a-chat__body-messages">
+        <div ref="messagesRef" :class="classes.bodyMessages">
+          <div ref="placeholderRef">
+            <slot name="placeholder" />
+          </div>
+
           <template v-for="message in messages" :key="message.id">
             <slot
               name="message"
@@ -28,7 +34,7 @@
           </template>
         </div>
 
-        <div class="a-chat__fab">
+        <div :class="classes.fab">
           <slot name="fab" />
         </div>
       </div>
@@ -36,205 +42,292 @@
       <slot name="form" />
     </div>
 
-    <div v-if="$slots.overlay" class="a-chat__overlay">
+    <div v-if="$slots.overlay" :class="classes.overlay">
       <slot name="overlay" />
     </div>
   </div>
 </template>
 
-<script>
-import throttle from 'lodash/throttle'
+<script lang="ts" setup>
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import scrollIntoView from 'scroll-into-view-if-needed'
 import Styler from 'stylefire'
 import { animate } from 'popmotion'
-
 import { SCROLL_TO_REPLIED_MESSAGE_ANIMATION_DURATION } from '@/lib/constants'
 import { isStringEqualCI } from '@/lib/textHelpers'
+import { NormalizedChatMessageTransaction } from '@/lib/chat/helpers'
+import { User } from '@/components/AChat/types'
+import { CHAT_CONNECTION_SPINNER_SIZE } from '@/components/Chat/helpers/uiMetrics'
+import { isWelcomeChat } from '@/lib/chat/meta/utils'
+import { throttle } from '@/lib/throttle'
 
-const emitScroll = throttle(function () {
-  this.$emit('scroll', this.currentScrollTop, this.isScrolledToBottom())
-}, 200)
+const className = 'a-chat'
+const classes = {
+  root: className,
+  content: `${className}__content`,
+  body: `${className}__body`,
+  bodyMessages: `${className}__body-messages`,
+  fab: `${className}__fab`,
+  overlay: `${className}__overlay`,
+  spinner: `${className}__spinner`,
+  spinnerWrapper: `${className}__spinner-wrapper`
+}
 
-export default {
-  props: {
-    messages: {
-      type: Array,
-      default: () => []
-    },
-    partners: {
-      type: Array,
-      default: () => []
-    },
-    userId: {
-      type: String
-    },
-    loading: {
-      type: Boolean,
-      default: false
-    },
-    locale: {
-      type: String,
-      default: 'en'
-    }
-  },
-  emits: ['scroll', 'scroll:bottom', 'scroll:top'],
-  data: () => ({
-    currentScrollHeight: 0,
-    currentScrollTop: 0,
-    currentClientHeight: 0
-  }),
-  mounted() {
-    this.attachScrollListener()
+type Props = {
+  messages: NormalizedChatMessageTransaction[]
+  showNewChatPlaceholder: boolean
+  isGettingPublicKey: boolean
+  partners: User[]
+  userId: string
+  loading: boolean
+  locale: string
+  partnerId: string
+}
 
-    this.currentClientHeight = this.$refs.messages.clientHeight
-    const resizeHandler = () => {
-      const clientHeightDelta = this.currentClientHeight - this.$refs.messages.clientHeight
+const props = withDefaults(defineProps<Props>(), {
+  messages: () => [],
+  showNewChatPlaceholder: false,
+  partners: () => [],
+  loading: false,
+  locale: 'en',
+  partnerId: ''
+})
 
-      const nonVisibleClientHeight =
-        this.$refs.messages.scrollHeight -
-        this.$refs.messages.clientHeight -
-        Math.ceil(this.$refs.messages.scrollTop)
-      const scrolledToBottom = nonVisibleClientHeight === 0
+const emit = defineEmits<{
+  (e: 'scroll', scrollPosition: number, isBottom: boolean): void
+  (e: 'scroll:bottom'): void
+  (e: 'scroll:top'): void
+}>()
 
-      if (scrolledToBottom) {
-        // Browser updates Element.scrollTop by itself
-      } else {
-        this.$refs.messages.scrollTop += clientHeightDelta
-      }
+const messagesRef = ref<HTMLElement | null>(null)
+const placeholderRef = ref<HTMLElement | null>(null)
+const bodyRef = ref<HTMLElement | null>(null)
 
-      this.currentClientHeight = this.$refs.messages.clientHeight
-    }
+const currentScrollHeight = ref(0)
+const currentScrollTop = ref(0)
+const currentClientHeight = ref(0)
 
-    this.resizeObserver = new ResizeObserver(resizeHandler)
-    this.resizeObserver.observe(this.$refs.messages)
-  },
-  beforeUnmount() {
-    this.destroyScrollListener()
-    this.resizeObserver?.unobserve(this.$refs.messages)
-  },
-  methods: {
-    attachScrollListener() {
-      this.$refs.messages.addEventListener('scroll', this.onScroll)
-    },
+const placeholderHeight = ref(0)
+const scrollTop = ref(0)
 
-    destroyScrollListener() {
-      this.$refs.messages.removeEventListener('scroll', this.onScroll)
-    },
+const SPINNER_VISIBLE_PLACEHOLDER_OFFSET = 12
+const SPINNER_PLACEHOLDER_TOP_OFFSET = 48
+const SPINNER_DEFAULT_TOP = 36
+// Mobile browsers can report fractional scroll positions while at the visual bottom
+const BOTTOM_SCROLL_TOLERANCE_PX = 2
 
-    onScroll() {
-      const scrollHeight = this.$refs.messages.scrollHeight
-      const scrollTop = Math.ceil(this.$refs.messages.scrollTop)
-      const clientHeight = this.$refs.messages.clientHeight
+const resizeHandler = () => {
+  if (!messagesRef.value) return
 
-      // Scrolled to Bottom
-      if (scrollHeight - scrollTop === clientHeight) {
-        this.$emit('scroll:bottom')
-      } else if (scrollTop === 0) {
-        // Scrolled to Top
-        // Save current `scrollHeight` to maintain scroll
-        // position when unshift new messages
-        this.currentScrollHeight = scrollHeight
-        this.$emit('scroll:top')
-      }
+  const clientHeightDelta = currentClientHeight.value - messagesRef.value.clientHeight
 
-      // Save previous values of `scrollTop` and `scrollHeight`
-      // Needed for keeping the same scroll position when prepending
-      // new messages to the chat
-      this.currentScrollTop = scrollTop
-      this.currentScrollHeight = scrollHeight
+  const previousScrollHeight = currentScrollHeight.value || messagesRef.value.scrollHeight
+  const previousScrollTop = currentScrollTop.value || Math.ceil(messagesRef.value.scrollTop)
+  const previousClientHeight = currentClientHeight.value || messagesRef.value.clientHeight
+  const previousOffsetToBottom = previousScrollHeight - previousClientHeight - previousScrollTop
+  const scrolledToBottom = previousOffsetToBottom <= BOTTOM_SCROLL_TOLERANCE_PX
 
-      emitScroll.call(this)
-    },
+  if (scrolledToBottom) {
+    // Keep the viewport anchored to the latest message when composer height changes
+    messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+  } else {
+    messagesRef.value.scrollTop += clientHeightDelta
+  }
 
-    // Fix scroll position after unshift new messages.
-    // Called from parent component.
-    maintainScrollPosition() {
-      this.$refs.messages.scrollTop =
-        this.$refs.messages.scrollHeight - this.currentScrollHeight + this.currentScrollTop
-    },
+  currentScrollTop.value = Math.ceil(messagesRef.value.scrollTop)
+  currentScrollHeight.value = messagesRef.value.scrollHeight
+  currentClientHeight.value = messagesRef.value.clientHeight
+}
 
-    // Scroll to Bottom when new message.
-    // Called from parent component.
-    scrollToBottom() {
-      this.$refs.messages.scrollTop = this.$refs.messages.scrollHeight
-    },
+const resizeObserver = ref(new ResizeObserver(resizeHandler))
 
-    scrollTo(position) {
-      this.$refs.messages.scrollTop = position
-    },
+const emitScroll = throttle(() => emit('scroll', currentScrollTop.value, isScrolledToBottom()), 200)
 
-    /**
-     * Scroll to message by index, starting with the last.
-     */
-    scrollToMessage(index) {
-      const elements = this.$refs.messages.children
+const onScroll = () => {
+  if (!messagesRef.value) return
 
-      if (!elements) return
+  const scrollHeight = messagesRef.value.scrollHeight
+  const scrollTopVal = Math.ceil(messagesRef.value.scrollTop)
+  const clientHeight = messagesRef.value.clientHeight
+  const offsetToBottom = scrollHeight - scrollTopVal - clientHeight
 
-      const element = elements[elements.length - 1 - index]
+  if (offsetToBottom <= BOTTOM_SCROLL_TOLERANCE_PX) {
+    emit('scroll:bottom')
+  } else if (scrollTopVal === 0) {
+    currentScrollHeight.value = scrollHeight
+    emit('scroll:top')
+  }
 
-      if (element) {
-        this.$refs.messages.scrollTop = element.offsetTop - 16
-      } else {
-        this.scrollToBottom()
-      }
-    },
+  currentScrollTop.value = scrollTopVal
+  currentScrollHeight.value = scrollHeight
 
-    /**
-     * Smooth scroll to message by index (starting with the last).
-     * @returns Promise<boolean> If `true` then scrolling has been applied.
-     */
-    scrollToMessageEasy(index) {
-      const elements = this.$refs.messages.children
+  scrollTop.value = scrollTopVal
 
-      if (!elements) return Promise.resolve(false)
+  emitScroll()
+}
 
-      const element = elements[elements.length - 1 - index]
+const maintainScrollPosition = () => {
+  if (!messagesRef.value) return
 
-      if (!element) return Promise.resolve(false)
+  messagesRef.value.scrollTop =
+    messagesRef.value.scrollHeight - currentScrollHeight.value + currentScrollTop.value
+}
 
-      return new Promise((resolve) => {
-        scrollIntoView(element, {
-          behavior: (instructions) => {
-            const [{ el, top }] = instructions
-            const styler = Styler(el)
+const scrollToBottom = () => {
+  if (messagesRef.value && messagesRef.value.scrollHeight) {
+    messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+  }
+}
 
-            // do nothing if the element is already scrolled at target position
-            if (el.scrollTop === top) {
-              resolve(false)
-              return
-            }
+const scrollTo = (position: number) => {
+  if (messagesRef.value) {
+    messagesRef.value.scrollTop = position
+  }
+}
 
-            animate({
-              from: el.scrollTop,
-              to: top,
-              duration: SCROLL_TO_REPLIED_MESSAGE_ANIMATION_DURATION,
-              onUpdate: (top) => styler.set('scrollTop', top),
-              onComplete: () => resolve(true)
-            })
-          },
-          block: 'center'
+const scrollToMessage = (index: number) => {
+  if (!messagesRef.value) return
+
+  const elements = messagesRef.value.children
+  const element = elements[elements.length - 1 - index] as HTMLElement
+
+  if (element) {
+    messagesRef.value.scrollTop = element.offsetTop - 16
+  } else {
+    scrollToBottom()
+  }
+}
+
+const scrollToMessageEasy = async (index: number): Promise<boolean> => {
+  if (!messagesRef.value) return false
+
+  const elements = messagesRef.value.children
+  const element = elements[elements.length - 1 - index] as HTMLElement
+
+  if (!element) return false
+
+  return new Promise((resolve) => {
+    scrollIntoView(element, {
+      behavior: (instructions) => {
+        const [{ el, top }] = instructions
+        const styler = Styler(el)
+
+        if (el.scrollTop === top) {
+          resolve(false)
+          return
+        }
+
+        animate({
+          from: el.scrollTop,
+          to: top,
+          duration: SCROLL_TO_REPLIED_MESSAGE_ANIMATION_DURATION,
+          onUpdate: (top) => styler.set('scrollTop', top),
+          onComplete: () => resolve(true)
         })
-      })
-    },
+      },
+      block: 'center'
+    })
+  })
+}
 
-    isScrolledToBottom() {
-      const scrollOffset =
-        this.$refs.messages.scrollHeight -
-        Math.ceil(this.$refs.messages.scrollTop) -
-        this.$refs.messages.clientHeight
+const isScrolledToBottom = () => {
+  if (!messagesRef.value) return false
 
-      return scrollOffset <= 60
-    },
+  const offset =
+    messagesRef.value.scrollHeight -
+    Math.ceil(messagesRef.value.scrollTop) -
+    messagesRef.value.clientHeight
 
-    /**
-     * Returns sender address and name.
-     * @param {string} senderId Sender address
-     * @returns {{ id: string, name: string }}
-     */
-    getSenderMeta(senderId) {
-      return this.partners.find((partner) => isStringEqualCI(partner.id, senderId))
+  return offset <= 60
+}
+
+const getSenderMeta = (senderId: string) => {
+  return props.partners.find((p) => isStringEqualCI(p.id, senderId))
+}
+
+onMounted(() => {
+  messagesRef.value?.addEventListener('scroll', onScroll)
+  if (messagesRef.value) {
+    currentClientHeight.value = messagesRef.value.clientHeight
+    resizeObserver.value.observe(messagesRef.value)
+  }
+
+  const updatePlaceholderHeight = () => {
+    placeholderHeight.value = placeholderRef.value?.clientHeight || 0
+  }
+  updatePlaceholderHeight()
+  if (placeholderRef.value) {
+    new ResizeObserver(updatePlaceholderHeight).observe(placeholderRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  messagesRef.value?.removeEventListener('scroll', onScroll)
+  if (messagesRef.value) {
+    resizeObserver.value.unobserve(messagesRef.value)
+  }
+})
+
+defineExpose({
+  scrollToBottom,
+  isScrolledToBottom,
+  scrollToMessageEasy,
+  maintainScrollPosition,
+  scrollToMessage,
+  scrollTo
+})
+
+const spinnerTop = computed(() => {
+  if (
+    (props.showNewChatPlaceholder || props.isGettingPublicKey) &&
+    scrollTop.value < placeholderHeight.value + SPINNER_VISIBLE_PLACEHOLDER_OFFSET
+  ) {
+    return placeholderHeight.value - scrollTop.value + SPINNER_PLACEHOLDER_TOP_OFFSET
+  }
+  return SPINNER_DEFAULT_TOP
+})
+</script>
+
+<style lang="scss" scoped>
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/components/_chat.scss';
+@use 'vuetify/settings';
+
+.a-chat {
+  &__body {
+    position: relative;
+  }
+
+  &__body-messages {
+    overflow-y: auto;
+  }
+
+  &__spinner-wrapper {
+    position: absolute;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 100;
+  }
+}
+
+/** Themes **/
+.v-theme--light {
+  .a-chat {
+    &__spinner {
+      color: map.get(colors.$adm-colors, 'grey');
     }
   }
 }
-</script>
+
+.v-theme--dark {
+  .a-chat {
+    &__spinner {
+      color: map.get(colors.$adm-colors, 'regular');
+    }
+  }
+}
+</style>

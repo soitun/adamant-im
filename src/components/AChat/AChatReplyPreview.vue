@@ -6,30 +6,34 @@
       </div>
 
       <div :class="classes.message">
-        <span v-if="!isCryptoTransfer" v-html="messageLabel"></span>
+        <preview-text v-if="!isCryptoTransfer" :text="messageLabel" />
         <span v-else>{{ cryptoTransferLabel }}</span>
       </div>
 
       <v-btn
         @click="$emit('cancel')"
         :class="classes.closeButton"
-        icon="mdi-close"
-        size="24"
+        :icon="mdiClose"
+        :size="COMMON_ICON_SIZE"
         variant="plain"
       />
     </div>
   </div>
 </template>
 
-<script>
-import { computed, defineComponent } from 'vue'
+<script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStore } from 'vuex'
 
 import ChatAvatar from '@/components/Chat/ChatAvatar.vue'
+import PreviewText from '@/components/common/PreviewText'
 import { Cryptos } from '@/lib/constants'
 import currencyFormatter from '@/filters/currencyAmountWithSymbol'
-import { formatMessage } from '@/lib/markdown'
+import { formatChatPreviewMessage } from '@/lib/markdown'
+import { mdiClose } from '@mdi/js'
+import type { NormalizedChatMessageTransaction } from '@/lib/chat/helpers'
+import { COMMON_ICON_SIZE } from '@/components/common/helpers/uiMetrics'
 
 const className = 'a-chat-reply-preview'
 const classes = {
@@ -40,81 +44,67 @@ const classes = {
   closeButton: `${className}__close-button`
 }
 
-export default defineComponent({
-  components: {
-    ChatAvatar
-  },
-  emits: ['cancel'],
-  props: {
-    message: {
-      type: Object,
-      required: true
-    },
-    partnerId: {
-      type: String,
-      required: true
-    }
-  },
-  setup(props) {
-    const { t } = useI18n()
-    const store = useStore()
+type AChatReplyPreviewProps = {
+  message: NormalizedChatMessageTransaction
+  partnerId: string
+}
 
-    const isCryptoTransfer = computed(() => {
-      const validCryptos = Object.keys(Cryptos)
+const props = defineProps<AChatReplyPreviewProps>()
 
-      return props.message ? validCryptos.includes(props.message.type) : false
-    })
+defineEmits<{
+  (e: 'cancel'): void
+}>()
 
-    const cryptoTransferLabel = computed(() => {
-      const direction =
-        props.message.senderId === props.partnerId
-          ? t('chats.received_label')
-          : t('chats.sent_label')
-      const amount = currencyFormatter(props.message.amount, props.message.type)
-      const message = props.message.message ? `: ${props.message.message}` : ''
+const { t } = useI18n()
+const store = useStore()
 
-      return `${direction} ${amount}${message}`
-    })
+const isCryptoTransfer = computed(() => {
+  const validCryptos = Object.keys(Cryptos)
 
-    const messageLabel = computed(() => {
-      return store.state.options.formatMessages
-        ? formatMessage(props.message.message)
-        : props.message.message
-    })
+  return props.message ? validCryptos.includes(props.message.type) : false
+})
 
-    return {
-      isCryptoTransfer,
-      cryptoTransferLabel,
-      classes,
-      messageLabel
-    }
-  }
+const cryptoTransferLabel = computed(() => {
+  const direction =
+    props.message.senderId === props.partnerId ? t('chats.received_label') : t('chats.sent_label')
+  const amount = currencyFormatter(props.message.amount, props.message.type)
+  const message = props.message.message ? `: ${props.message.message}` : ''
+
+  return `${direction} ${amount}${message}`
+})
+
+const messageLabel = computed(() => {
+  return store.state.options.formatMessages
+    ? formatChatPreviewMessage(props.message.message)
+    : props.message.message
 })
 </script>
 
 <style lang="scss" scoped>
-@import '@/assets/styles/settings/_colors.scss';
-@import '@/assets/styles/themes/adamant/_mixins.scss';
+@use 'sass:map';
+@use '@/assets/styles/components/_chat-message-content.scss' as chatMessageContent;
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss';
 
 $message-max-lines: 2;
 
 .a-chat-reply-preview {
-  border-left: 3px solid map-get($adm-colors, 'attention');
-  border-radius: 8px;
-  margin: 8px;
+  border-left: var(--a-chat-accent-border-width) solid map.get(colors.$adm-colors, 'attention');
+  border-radius: var(--a-radius-sm);
+  margin: var(--a-space-2);
 
   &__container {
-    padding: 8px 16px;
+    padding: var(--a-space-2) var(--a-space-4);
     position: relative;
     display: flex;
   }
 
   &__message {
-    @include a-text-regular-enlarged();
-    line-height: 20px; // half of <ChatAvatar/> height
+    @include chatMessageContent.a-chat-message-body-copy();
+    line-height: var(--a-chat-reply-preview-line-height);
 
-    margin-left: 8px;
-    margin-right: 8px;
+    margin-left: var(--a-space-2);
+    margin-right: var(--a-space-2);
 
     overflow: hidden;
     display: -webkit-box;
@@ -126,22 +116,22 @@ $message-max-lines: 2;
     position: absolute;
     right: 0;
     top: 0;
-    margin-right: 4px;
-    margin-top: 4px;
+    margin-right: var(--a-space-1);
+    margin-top: var(--a-space-1);
   }
 }
 
 .v-theme--light {
   .a-chat-reply-preview {
-    background-color: map-get($adm-colors, 'secondary');
-    color: map-get($adm-colors, 'regular');
+    background-color: map.get(colors.$adm-colors, 'secondary');
+    color: map.get(colors.$adm-colors, 'regular');
   }
 }
 
 .v-theme--dark {
   .a-chat-reply-preview {
-    background-color: rgba(245, 245, 245, 0.1); // @todo const
-    color: #fff;
+    background-color: map.get(colors.$adm-colors, 'secondary2-slightly-transparent');
+    color: var(--a-color-text-inverse);
   }
 }
 </style>

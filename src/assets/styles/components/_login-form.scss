@@ -1,4 +1,5 @@
-@import '../settings/_colors.scss';
+@use 'sass:map';
+@use '../settings/_colors.scss';
 
 /**
  * Centering input text and label.
@@ -60,17 +61,17 @@
 .v-theme--light {
   .login-form {
     .v-input input {
-      color: map-get($adm-colors, 'regular');
+      color: map.get(colors.$adm-colors, 'regular');
     }
 
     .v-text-field > .v-input__control > .v-field > .v-field__outline:before {
       /* [4.a.] */
-      border-color: rgba(0, 0, 0, 0.12);
+      border-color: var(--a-color-border-neutral-light);
     }
 
     .v-text-field > .v-input__control > .v-field.v-field--focused > .v-field__outline:hover:before {
       /* [4.b.] */
-      border-color: rgba(0, 0, 0, 0.12);
+      border-color: var(--a-color-border-neutral-light);
     }
 
     .v-text-field > .v-input__control > .v-field.v-field--focused > .v-field__outline:after {

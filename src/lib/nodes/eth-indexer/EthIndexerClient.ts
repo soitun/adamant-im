@@ -1,4 +1,6 @@
 import { AxiosRequestConfig } from 'axios'
+import { NODE_LABELS } from '@/lib/nodes/constants'
+import type { NodeInfo } from '@/types/wallets'
 import { GetTransactionsParams } from './types/client/get-transactions-params'
 import { GetTransactionsRequest } from './types/api/get-transactions/get-transactions.request'
 import { Endpoints } from './types/api/endpoints'
@@ -7,8 +9,8 @@ import { normalizeTransaction } from './utils'
 import { Client } from '../abstract.client'
 
 export class EthIndexerClient extends Client<EthIndexer> {
-  constructor(endpoints: string[] = [], minNodeVersion = '0.0.0') {
-    super('eth')
+  constructor(endpoints: NodeInfo[] = [], minNodeVersion = '0.0.0') {
+    super('eth', 'service', NODE_LABELS.EthIndexer)
     this.nodes = endpoints.map((endpoint) => new EthIndexer(endpoint))
     this.minNodeVersion = minNodeVersion
 
@@ -18,11 +20,9 @@ export class EthIndexerClient extends Client<EthIndexer> {
   private async request<E extends keyof Endpoints>(
     endpoint: E,
     params?: Endpoints[E]['params'],
-    axiosRequestConfig?: AxiosRequestConfig
+    axiosRequestConfig?: AxiosRequestConfig<Endpoints[E]['params'], Endpoints[E]['params']>
   ): Promise<Endpoints[E]['result']> {
-    const node = this.getNode()
-
-    return node.request(endpoint, params, axiosRequestConfig)
+    return this.requestWithRetry((node) => node.request(endpoint, params, axiosRequestConfig))
   }
 
   /**
@@ -55,16 +55,16 @@ export class EthIndexerClient extends Client<EthIndexer> {
 
     const requestParams: GetTransactionsRequest = {
       and: `(${filters.join(',')})`,
-      order: 'time.desc',
-      limit: limit ? limit : undefined
+      order: 'time.desc'
+      // limit: limit ? limit : undefined
     }
-
-    if (limit) requestParams.limit = limit
 
     const transactions = await this.request('GET /ethtxs', {
       ...requestParams
     })
 
-    return transactions.map((transaction) => normalizeTransaction(transaction, address, decimals))
+    return transactions
+      .map((transaction) => normalizeTransaction(transaction, address, decimals))
+      .slice(0, limit)
   }
 }

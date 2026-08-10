@@ -1,6 +1,5 @@
-import { toLocalCurrency } from '@/lib/toLocalCurrency.ts'
-import BigNumber from 'bignumber.js'
-import bignumber from '@/lib/bignumber'
+import { toLocalCurrency } from '@/lib/toLocalCurrency'
+import { BigNumber } from '@/lib/bignumber'
 
 const compactOptions = {
   notation: 'compact',
@@ -10,7 +9,7 @@ const decimalOptions = {
   style: 'decimal',
   maximumFractionDigits: 15
 }
-const toSmallPrecision = (value: number | bignumber | string, significantDigits = 1) => {
+const toSmallPrecision = (value: number | BigNumber | string, significantDigits = 1) => {
   return new BigNumber(value).precision(significantDigits, BigNumber.ROUND_DOWN)
 }
 
@@ -25,6 +24,7 @@ export default function smartNumber(num: string | number, locale: string = 'en-U
   const integerPartCount = String(integerPart).length
 
   const decimalPart = stringifiedNumber.split('.')[1]
+  const hasDecimalPart = decimalPart !== undefined && decimalPart !== ''
 
   // For very large numbers
   if (integerPart > maximumBeforeCompact) {
@@ -32,7 +32,11 @@ export default function smartNumber(num: string | number, locale: string = 'en-U
   }
 
   // For very small numbers
-  if (integerPart < 10 && BigNumber(toSmallPrecision(`0.${decimalPart}`)) <= minimumValue) {
+  if (
+    integerPart < 10 &&
+    hasDecimalPart &&
+    BigNumber(toSmallPrecision(`0.${decimalPart}`)) <= minimumValue
+  ) {
     const resultFullPart = toLocalCurrency(stringifiedNumber, locale, decimalOptions)
     const modifiedDecimal = String(toSmallPrecision(`0.${decimalPart}`))
       .split('.')

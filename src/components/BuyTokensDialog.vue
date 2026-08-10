@@ -1,93 +1,60 @@
 <template>
-  <v-dialog v-model="show" width="320" :class="className">
+  <v-dialog v-model="show" width="var(--a-secondary-dialog-width-compact)" :class="classes.root">
     <v-card>
-      <v-card-title class="a-text-header">
-        {{ $t('home.buy_tokens_btn') }}
+      <v-card-title :class="`${classes.root}__dialog-title`">
+        {{ t('home.buy_tokens_btn') }}
       </v-card-title>
 
       <v-divider class="a-divider" />
 
-      <v-card-text class="pa-0">
-        <v-list>
-          <v-list-item avatar @click="openLink('U5149447931090026688')">
+      <v-card-text :class="classes.dialogBody">
+        <v-list bg-color="transparent" :class="`${classes.root}__list`">
+          <v-list-item :class="classes.listItem" avatar @click="openLink('U5149447931090026688')">
             <template #prepend>
               <icon><exchanger-icon /></icon>
             </template>
 
-            <v-list-item-title>{{ $t('home.buy_tokens_exchanger') }}</v-list-item-title>
+            <v-list-item-title :class="classes.listItemTitle">{{
+              t('home.buy_tokens_exchanger')
+            }}</v-list-item-title>
           </v-list-item>
 
-          <v-list-item avatar @click="openLink(admLink)">
+          <v-list-item :class="classes.listItem" avatar @click="openLink(admLink)">
             <template #prepend>
               <icon><adamant-icon /></icon>
             </template>
 
-            <v-list-item-title>{{ $t('home.buy_tokens_anonymously') }}</v-list-item-title>
-          </v-list-item>
-
-          <v-list-item avatar @click="openLink('https://azbit.com/?referralCode=9YVWYAF')">
-            <template #prepend>
-              <icon><azbit-icon /></icon>
-            </template>
-
-            <v-list-item-title>Azbit</v-list-item-title>
+            <v-list-item-title :class="classes.listItemTitle">{{
+              t('home.buy_tokens_anonymously')
+            }}</v-list-item-title>
           </v-list-item>
 
           <v-list-item
+            :class="classes.listItem"
             avatar
-            @click="openLink('https://stakecube.net/app/exchange/adm_usdt?layout=pro&team=adm')"
+            @click="openLink('https://coinmarketcap.com/currencies/adamant-messenger/#markets')"
           >
             <template #prepend>
-              <icon><stake-cube-icon /></icon>
+              <icon><coinmarketcap-icon /></icon>
             </template>
 
-            <v-list-item-title>StakeCube</v-list-item-title>
+            <v-list-item-title :class="classes.listItemTitle">{{
+              t('home.exchanges_on', { aggregator: 'CoinMarketCap' })
+            }}</v-list-item-title>
           </v-list-item>
 
           <v-list-item
+            :class="classes.listItem"
             avatar
-            @click="openLink('https://h5.coinstore.com/h5/signup?invitCode=o951vZ')"
+            @click="openLink('https://www.coingecko.com/en/coins/adamant-messenger#markets')"
           >
             <template #prepend>
-              <icon><coinstore-icon /></icon>
+              <icon><coingecko-icon /></icon>
             </template>
 
-            <v-list-item-title>Coinstore</v-list-item-title>
-          </v-list-item>
-
-          <v-list-item
-            avatar
-            @click="
-              openLink('https://www.fameex.com/en-US/trade/adm-usdt/commissiondispense?code=MKKAWV')
-            "
-          >
-            <template #prepend>
-              <icon><fameex-icon /></icon>
-            </template>
-
-            <v-list-item-title>FameEX</v-list-item-title>
-          </v-list-item>
-
-          <v-list-item
-            avatar
-            @click="openLink('https://xeggex.com/market/ADM_USDT?ref=656846d209bbed85b91aba4d')"
-          >
-            <template #prepend>
-              <icon><xeggex-icon /></icon>
-            </template>
-
-            <v-list-item-title>XeggeX</v-list-item-title>
-          </v-list-item>
-
-          <v-list-item
-            avatar
-            @click="openLink('https://nonkyc.io/market/ADM_USDT?ref=655b4df9eb13acde84677358')"
-          >
-            <template #prepend>
-              <icon><nonkyc-icon /></icon>
-            </template>
-
-            <v-list-item-title>NonKYC</v-list-item-title>
+            <v-list-item-title :class="classes.listItemTitle">{{
+              t('home.exchanges_on', { aggregator: 'CoinGecko' })
+            }}</v-list-item-title>
           </v-list-item>
         </v-list>
       </v-card-text>
@@ -95,72 +62,122 @@
   </v-dialog>
 </template>
 
-<script>
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
+
 import validateAddress from '@/lib/validateAddress'
-import Icon from '@/components/icons/BaseIcon.vue'
-import AdamantIcon from '@/components/icons/common/Adamant.vue'
-import AzbitIcon from '@/components/icons/common/Azbit.vue'
-import ExchangerIcon from '@/components/icons/common/Exchanger.vue'
-import StakeCubeIcon from '@/components/icons/common/StakeCube.vue'
-import CoinstoreIcon from '@/components/icons/common/Coinstore.vue'
-import NonkycIcon from '@/components/icons/common/Nonkyc.vue'
-import FameexIcon from '@/components/icons/common/Fameex.vue'
-import XeggexIcon from '@/components/icons/common/Xeggex.vue'
 import { websiteUriToOnion } from '@/lib/uri'
 
-export default {
-  components: {
-    Icon,
-    AdamantIcon,
-    AzbitIcon,
-    ExchangerIcon,
-    StakeCubeIcon,
-    CoinstoreIcon,
-    NonkycIcon,
-    FameexIcon,
-    XeggexIcon
+import AdamantIcon from '@/components/icons/common/Adamant.vue'
+import CoingeckoIcon from '@/components/icons/common/Coingecko.vue'
+import CoinmarketcapIcon from '@/components/icons/common/Coinmarketcap.vue'
+import ExchangerIcon from '@/components/icons/common/Exchanger.vue'
+import Icon from '@/components/icons/BaseIcon.vue'
+import { openExternalLink } from '@/lib/openExternalLink'
+
+const className = 'buy-tokens-dialog'
+const classes = {
+  root: className,
+  dialogBody: `${className}__dialog-body`,
+  listItem: `${className}__list-item`,
+  listItemTitle: `${className}__list-item-title`
+}
+
+const props = defineProps({
+  modelValue: {
+    type: Boolean,
+    required: true
   },
-  props: {
-    modelValue: {
-      type: Boolean,
-      required: true
-    },
-    adamantAddress: {
-      type: String,
-      default: undefined,
-      validator: (v) => validateAddress('ADM', v)
-    }
+  adamantAddress: {
+    type: String,
+    default: undefined,
+    validator: (v: string) => validateAddress('ADM', v)
+  }
+})
+
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: boolean): void
+}>()
+
+const { t } = useI18n()
+const router = useRouter()
+
+const show = computed({
+  get() {
+    return props.modelValue
   },
-  emits: ['update:modelValue'],
-  computed: {
-    className: () => 'buy-tokens-dialog',
-    admLink() {
-      return websiteUriToOnion(
-        this.adamantAddress
-          ? `${this.$t('home.buy_tokens_btn_link')}?wallet=${this.adamantAddress}`
-          : `${this.$t('home.buy_tokens_btn_link')}`
-      )
-    },
-    show: {
-      get() {
-        return this.modelValue
-      },
-      set(value) {
-        this.$emit('update:modelValue', value)
-      }
-    }
-  },
-  methods: {
-    openLink(link) {
-      if (link.startsWith('U')) {
-        this.$router.push({
-          name: 'Chat',
-          params: { partnerId: link }
-        })
-      } else {
-        window.open(link, '_blank', 'resizable,scrollbars,status,noopener')
-      }
+  set(value) {
+    emit('update:modelValue', value)
+  }
+})
+
+const admLink = computed(() =>
+  websiteUriToOnion(
+    props.adamantAddress
+      ? `${t('home.buy_tokens_btn_link')}?wallet=${props.adamantAddress}`
+      : `${t('home.buy_tokens_btn_link')}`
+  )
+)
+
+const closeDialog = () => {
+  show.value = false
+}
+
+const openLink = (link: string) => {
+  if (link.startsWith('U')) {
+    router.push({
+      name: 'Chat',
+      params: { partnerId: link }
+    })
+  } else {
+    openExternalLink(link)
+  }
+
+  closeDialog()
+}
+</script>
+
+<style lang="scss">
+@use 'sass:map';
+@use '@/assets/styles/components/_secondary-dialog.scss' as secondaryDialog;
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss' as mixins;
+@use 'vuetify/_settings.scss';
+
+.buy-tokens-dialog {
+  @include secondaryDialog.a-secondary-dialog-card-frame($is-scoped: false);
+
+  &__dialog-title {
+    @include mixins.a-text-header();
+  }
+
+  &__dialog-body {
+    padding: var(--a-secondary-dialog-content-padding-reset) !important;
+  }
+
+  &__list {
+    background: var(--a-secondary-dialog-list-background);
+    padding-block: var(--a-secondary-dialog-list-padding-block) !important;
+  }
+}
+
+.v-theme--light {
+  .buy-tokens-dialog {
+    &__dialog-title,
+    &__list-item-title {
+      color: map.get(colors.$adm-colors, 'regular');
     }
   }
 }
-</script>
+
+.v-theme--dark {
+  .buy-tokens-dialog {
+    &__dialog-title,
+    &__list-item-title {
+      color: map.get(settings.$shades, 'white');
+    }
+  }
+}
+</style>

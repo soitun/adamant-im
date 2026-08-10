@@ -1,0 +1,111 @@
+<template>
+  <AChatMessageActionsDropdown
+    :transaction="transaction"
+    :open="open"
+    @open:change="toggleActionsDropdown"
+    @click:reply="openReplyPreview"
+    @click:copy="copyMessageToClipboard"
+    @click:retry="retryMessage"
+  >
+    <template #top>
+      <transition name="slide-y-reverse-transition" mode="out-in">
+        <AChatMessageStatusNote v-if="isRejectedOutgoingMessage" key="rejected-status-note" />
+
+        <EmojiPicker
+          v-else-if="showEmojiPicker"
+          key="emoji-picker"
+          @emoji:select="onEmojiSelect"
+          elevation
+          position="absolute"
+        />
+
+        <AChatReactionSelect
+          v-else
+          key="reaction-select"
+          :transaction="transaction"
+          @reaction:add="sendReaction"
+          @reaction:remove="removeReaction"
+          @click:emoji-picker="$emit('update:showEmojiPicker', true)"
+        />
+      </transition>
+    </template>
+
+    <template #bottom>
+      <AChatMessageActionsList
+        v-if="!showEmojiPicker"
+        :transaction="transaction"
+        @click:reply="openReplyPreview"
+        @click:copy="copyMessageToClipboard"
+        @click:retry="retryMessage"
+      />
+    </template>
+  </AChatMessageActionsDropdown>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { NormalizedChatMessageTransaction } from '@/lib/chat/helpers'
+import EmojiPicker from '@/components/EmojiPicker.vue'
+import {
+  AChatReactionSelect,
+  AChatMessageActionsList,
+  AChatMessageActionsDropdown,
+  AChatMessageStatusNote
+} from '@/components/AChat'
+import { TransactionStatus } from '@/lib/constants'
+import { useStore } from 'vuex'
+import { isStringEqualCI } from '@/lib/textHelpers'
+
+const props = defineProps<{
+  transaction: NormalizedChatMessageTransaction
+  open: boolean
+  showEmojiPicker: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'open:change', open: boolean, transaction: NormalizedChatMessageTransaction): void
+  (e: 'click:reply', message: NormalizedChatMessageTransaction): void
+  (e: 'click:copy', message: NormalizedChatMessageTransaction): void
+  (e: 'click:retry', message: NormalizedChatMessageTransaction): void
+  (e: 'reaction:add', reactToId: string, emoji: string): void
+  (e: 'reaction:remove', reactToId: string, emoji: string): void
+  (e: 'emoji:select', transactionId: string, emoji: string): void
+  (e: 'update:showEmojiPicker', value: boolean): void
+}>()
+
+const store = useStore()
+const isRejectedOutgoingMessage = computed(
+  () =>
+    props.transaction.type === 'message' &&
+    props.transaction.status === TransactionStatus.REJECTED &&
+    isStringEqualCI(props.transaction.senderId, store.state.address)
+)
+
+const toggleActionsDropdown = (open: boolean) => {
+  emit('open:change', open, props.transaction)
+}
+
+const openReplyPreview = () => {
+  emit('click:reply', props.transaction)
+}
+
+const copyMessageToClipboard = () => {
+  emit('click:copy', props.transaction)
+}
+
+const retryMessage = () => {
+  emit('click:retry', props.transaction)
+}
+
+const sendReaction = (reactToId: string, emoji: string) => {
+  emit('reaction:add', reactToId, emoji)
+}
+
+const removeReaction = (reactToId: string, emoji: string) => {
+  emit('reaction:remove', reactToId, emoji)
+}
+
+const onEmojiSelect = (emoji: string) => {
+  emit('emoji:select', props.transaction.id, emoji)
+}
+</script>

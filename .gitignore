@@ -9,11 +9,16 @@ package3.json
 
 /tests/e2e/videos/
 /tests/e2e/screenshots/
+/playwright-report/
+/test-results/
+
+.playwright-cli/
 
 # local env files
 .env.local
 .env.*.local
 electron-builder.env
+electron-builder.env.local
 
 # Log files
 npm-debug.log*
@@ -25,10 +30,11 @@ yarn-error.log*
 .vscode
 *.suo
 *.ntvs*
-*.njsproj
+*.csproj
 *.sln
 *.sw*
-
+# Android-builder out
+/dist-android
 # Electron-builder output
 /dist-electron
 # Electron app will be placed here after packaging
@@ -49,3 +55,10 @@ capacitor/app.keystore
 src/lib/schema/*
 !src/lib/schema/schema.json
 !src/lib/schema/config.json
+
+# ai agents
+.ai-ignored/
+.ai-tasks/
+.ai-general/
+.claude/
+.cursor/

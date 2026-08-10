@@ -1,15 +1,30 @@
-import { describe, it, beforeEach, expect } from 'vitest'
-import module from '@/store/modules/options'
+import { afterEach, describe, it, beforeEach, expect, vi } from 'vitest'
+import module, { getInitialDarkTheme } from '@/store/modules/options'
 
 describe('Store: options.js', () => {
   let state = null
+  const originalMatchMedia = window.matchMedia
 
   beforeEach(() => {
     state = module.state()
   })
 
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+  })
+
   it('should return initial state', () => {
     expect(typeof state === 'object').toBe(true)
+  })
+
+  it.each([
+    [true, true],
+    [false, false]
+  ])('uses the system theme before a user preference is restored', (matches, expected) => {
+    window.matchMedia = vi.fn(() => ({ matches }))
+
+    expect(getInitialDarkTheme()).toBe(expected)
+    expect(module.state().darkTheme).toBe(expected)
   })
 
   it('should mutate existing option', () => {
@@ -32,5 +47,89 @@ describe('Store: options.js', () => {
     })
 
     expect(state.nonExistentOption).toBe(undefined)
+  })
+
+  it('stores the last visited settings route', () => {
+    expect(state.settingsLastRoute).toBe('/options')
+
+    module.mutations.setSettingsLastRoute(state, '/options/wallets')
+
+    expect(state.settingsLastRoute).toBe('/options/wallets')
+  })
+
+  it('stores the last visited account route', () => {
+    expect(state.accountLastRoute).toBe('/home')
+
+    module.mutations.setAccountLastRoute(state, '/transactions/ADM')
+
+    expect(state.accountLastRoute).toBe('/transactions/ADM')
+  })
+
+  it('stores account scroll positions per route', () => {
+    expect(module.getters.accountScrollPosition(state)('/home')).toBe(0)
+
+    module.mutations.setAccountScrollPosition(state, {
+      path: '/transactions/ADM',
+      top: 184
+    })
+    module.mutations.setAccountScrollPosition(state, {
+      path: '/transactions/ADM/txid',
+      top: 92
+    })
+
+    expect(module.getters.accountScrollPosition(state)('/transactions/ADM')).toBe(184)
+    expect(module.getters.accountScrollPosition(state)('/transactions/ADM/txid')).toBe(92)
+    expect(module.getters.accountScrollPosition(state)('/home')).toBe(0)
+  })
+
+  it('resets saved account route and scroll positions', () => {
+    module.mutations.setAccountLastRoute(state, '/transactions/ADM')
+    module.mutations.setAccountScrollPosition(state, {
+      path: '/transactions/ADM',
+      top: 260
+    })
+    module.mutations.setAccountScrollPosition(state, {
+      path: '/transactions/ADM/txid',
+      top: 120
+    })
+
+    module.mutations.resetAccountViewState(state)
+
+    expect(state.accountLastRoute).toBe('/home')
+    expect(state.accountScrollPositions).toEqual({})
+  })
+
+  it('stores settings scroll positions per route', () => {
+    expect(module.getters.settingsScrollPosition(state)('/options')).toBe(0)
+
+    module.mutations.setSettingsScrollPosition(state, {
+      path: '/options/wallets',
+      top: 184
+    })
+    module.mutations.setSettingsScrollPosition(state, {
+      path: '/options/nodes',
+      top: 92
+    })
+
+    expect(module.getters.settingsScrollPosition(state)('/options/wallets')).toBe(184)
+    expect(module.getters.settingsScrollPosition(state)('/options/nodes')).toBe(92)
+    expect(module.getters.settingsScrollPosition(state)('/options')).toBe(0)
+  })
+
+  it('resets saved settings route and scroll positions', () => {
+    module.mutations.setSettingsLastRoute(state, '/options/nodes')
+    module.mutations.setSettingsScrollPosition(state, {
+      path: '/options',
+      top: 260
+    })
+    module.mutations.setSettingsScrollPosition(state, {
+      path: '/options/nodes',
+      top: 120
+    })
+
+    module.mutations.resetSettingsViewState(state)
+
+    expect(state.settingsLastRoute).toBe('/options')
+    expect(state.settingsScrollPositions).toEqual({})
   })
 })

@@ -3,8 +3,10 @@
 import Notify from 'notifyjs'
 import Visibility from 'visibilityjs'
 import currency from '@/filters/currencyAmountWithSymbol'
-import { removeFormats } from '@/lib/markdown'
+import { formatMessageBasic } from '@/lib/markdown'
 import { isAdamantChat } from '@/lib/chat/meta/utils'
+import { joinUrl } from '@/lib/urlFormatter.js'
+import { logger } from '@/utils/devTools/logger'
 
 let _this
 
@@ -80,7 +82,7 @@ class PushNotification extends Notification {
       message = this.lastUnread.message
     }
     const processedMessage = this.store.state.options.formatMessages
-      ? removeFormats(message)
+      ? formatMessageBasic(message)
       : message
     return `${this.partnerIdentity}: ${processedMessage}`
   }
@@ -102,7 +104,7 @@ class PushNotification extends Notification {
                 const notification = new Notify(this.i18n.t('app_title'), {
                   body: this.messageBody,
                   closeOnClick: true,
-                  icon: '/img/icons/android-chrome-192x192.png',
+                  icon: joinUrl(import.meta.env.BASE_URL, '/img/icons/android-chrome-192x192.png'),
                   notifyClick: () => {
                     if (_this.$route.name !== 'Chat') {
                       this.router.push({
@@ -134,7 +136,7 @@ class PushNotification extends Notification {
       )
     } catch (x) {
       // Notification API not supported or another error
-      console.error(x)
+      logger.log('notifications', 'warn', x)
       this.store.dispatch('snackbar/show', {
         message: this.i18n.t('options.push_not_supported')
       })
@@ -149,7 +151,7 @@ class PushNotification extends Notification {
 class SoundNotification extends Notification {
   constructor(ctx) {
     super(ctx)
-    this.audio = new Audio('/sound/bbpro_link.mp3')
+    this.audio = new Audio(joinUrl(import.meta.env.BASE_URL, '/sound/bbpro_link.mp3'))
   }
 
   notify(messageArrived) {
@@ -178,7 +180,7 @@ class TabNotification extends Notification {
     this.interval = window.setInterval(() => {
       if (this.unreadAmount && this.showAmount) {
         if (this.unreadAmount < 100) {
-          document.title = this.i18n.tc('notifications.tabMessage.few', this.unreadAmount)
+          document.title = this.i18n.t('notifications.tabMessage.few', this.unreadAmount)
         } else {
           document.title = this.i18n.t('notifications.tabMessage.many')
         }

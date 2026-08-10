@@ -283,7 +283,8 @@
 </template>
 
 <style lang="scss" scoped>
-@import 'vuetify/settings';
+@use 'sass:map';
+@use 'vuetify/settings';
 
 .st0 {
   fill: url(#SVGID_1_);
@@ -342,11 +343,11 @@
 }
 
 .logo {
-  width: 213px;
-  height: 213px;
-  border: 1px solid #f1f1f1;
+  width: var(--a-logo-size);
+  height: var(--a-logo-size);
+  border: var(--a-border-width-thin) solid #f1f1f1;
   border-radius: 50% !important;
-  background-color: map-get($shades, 'white');
+  background-color: map.get(settings.$shades, 'white');
   .st9 {
     stroke: rgba(103, 148, 206, 0.2);
   }
@@ -355,10 +356,10 @@
     stroke: rgba(103, 148, 206, 0.8);
   }
 }
-@media #{map-get($display-breakpoints, 'sm-and-up')} {
+@media #{map.get(settings.$display-breakpoints, 'sm-and-up')} {
   .logo {
-    width: 300px;
-    height: 300px;
+    width: var(--a-logo-size-lg);
+    height: var(--a-logo-size-lg);
   }
 }
 </style>

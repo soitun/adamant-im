@@ -1,13 +1,17 @@
 <template>
   <v-card class="chat">
-    <free-tokens-dialog v-model="showFreeTokensDialog" />
+    <free-tokens-dialog v-model="isShowFreeTokensDialog" />
     <a-chat
-      ref="chat"
-      :messages="messages"
+      ref="chatRef"
+      :key="dateRefreshKey"
+      :messages="groupedMessages"
+      :show-new-chat-placeholder="showNewChatPlaceholder"
       :partners="partners"
+      :partner-id="partnerId"
+      :is-getting-public-key="isGettingPublicKey"
       :user-id="userId"
-      :loading="loading"
-      :locale="$i18n.locale"
+      :loading="loading && !isGettingPublicKey"
+      :locale="currentLocale"
       @scroll:top="onScrollTop"
       @scroll:bottom="onScrollBottom"
       @scroll="onScroll"
@@ -21,11 +25,11 @@
           <a-chat-message
             v-if="actionMessage.type === 'message'"
             :transaction="actionMessage"
-            :status="getTransactionStatus(actionMessage)"
             :data-id="'action-message'"
             html
             disable-max-width
             elevation
+            @click:status="openStatusActions(actionMessage)"
           >
             <template #avatar>
               <ChatAvatar :user-id="partnerId" use-public-key @click="onClickAvatar(partnerId)" />
@@ -35,9 +39,6 @@
           <a-chat-transaction
             v-else-if="isTransaction(actionMessage.type)"
             :transaction="actionMessage"
-            :crypto="actionMessage.type"
-            :tx-timestamp="getTransaction(actionMessage.type, actionMessage.hash).timestamp"
-            :status="getTransactionStatus(actionMessage)"
             :data-id="'action-message'"
             disable-max-width
             elevation
@@ -48,27 +49,38 @@
           </a-chat-transaction>
 
           <template #top>
-            <EmojiPicker
-              v-if="showEmojiPicker"
-              @emoji:select="(emoji) => onEmojiSelect(actionMessage.id, emoji)"
-              elevation
-              position="absolute"
-            />
+            <transition name="slide-y-reverse-transition" mode="out-in">
+              <AChatMessageStatusNote
+                v-if="isRejectedOutgoingMessage(actionMessage)"
+                key="rejected-status-note"
+              />
 
-            <AChatReactionSelect
-              v-else
-              :transaction="actionMessage"
-              @reaction:add="sendReaction"
-              @reaction:remove="removeReaction"
-              @click:emoji-picker="showEmojiPicker = true"
-            />
+              <EmojiPicker
+                v-else-if="showEmojiPicker"
+                key="emoji-picker"
+                @emoji:select="(emoji) => onEmojiSelect(actionMessage.id, emoji)"
+                elevation
+                position="absolute"
+              />
+
+              <AChatReactionSelect
+                v-else
+                key="reaction-select"
+                :transaction="actionMessage"
+                @reaction:add="sendReaction"
+                @reaction:remove="removeReaction"
+                @click:emoji-picker="showEmojiPicker = true"
+              />
+            </transition>
           </template>
 
           <template #bottom>
             <AChatMessageActionsMenu
               v-if="!showEmojiPicker"
+              :transaction="actionMessage"
               @click:reply="openReplyPreview(actionMessage)"
               @click:copy="copyMessageToClipboard(actionMessage)"
+              @click:retry="retryRejectedMessage(actionMessage)"
             />
           </template>
         </a-chat-actions-overlay>
@@ -78,82 +90,103 @@
         <chat-toolbar :partner-id="partnerId">
           <template #avatar-toolbar>
             <ChatAvatar
+              v-if="!showSpinner"
               class="chat-avatar"
               :user-id="partnerId"
               use-public-key
               @click="onClickAvatar(partnerId)"
             />
+            <v-progress-circular
+              v-else
+              class="connection-spinner chat__connection-spinner"
+              indeterminate
+              :size="CHAT_CONNECTION_SPINNER_SIZE"
+            />
           </template>
         </chat-toolbar>
+      </template>
+
+      <template #placeholder>
+        <chat-placeholder
+          :show-placeholder="showNewChatPlaceholder"
+          :is-getting-public-key="isGettingPublicKey"
+          :is-key-missing="isKeyMissing"
+        />
       </template>
 
       <template #message="{ message, sender }">
         <a-chat-message
           v-if="message.type === 'message'"
           :transaction="message"
-          :status="getTransactionStatus(message)"
           :html="true"
           :flashing="flashingMessageId === message.id"
           :data-id="message.id"
           :swipe-disabled="isWelcomeMessage(message)"
-          @resend="resendMessage(partnerId, message.id)"
+          @click:status="openStatusActions(message)"
           @click:quoted-message="onQuotedMessageClick"
           @swipe:left="onSwipeLeft(message)"
           @longpress="onMessageLongPress(message)"
         >
-          <template #avatar>
+          <template #actions v-if="isRealMessage(message)">
+            <AChatReactions @click="handleClickReactions(message)" :transaction="message" />
+
+            <ChatMessageActions
+              :transaction="message"
+              :open="actionsDropdownMessageId === message.id"
+              :show-emoji-picker="showEmojiPicker"
+              @open:change="toggleActionsDropdown"
+              @click:reply="openReplyPreview"
+              @click:copy="copyMessageToClipboard"
+              @click:retry="retryRejectedMessage"
+              @reaction:add="sendReaction"
+              @reaction:remove="removeReaction"
+              @emoji:select="onEmojiSelect"
+              @update:show-emoji-picker="showEmojiPicker = $event"
+            />
+          </template>
+        </a-chat-message>
+
+        <a-chat-attachment
+          v-if="message.type === 'attachment'"
+          :transaction="message"
+          :html="true"
+          :flashing="flashingMessageId === message.id"
+          :data-id="message.id"
+          :partner-id="partnerId"
+          @resend="() => logger.log('Chat', 'debug', 'Not implemented')"
+          @click:quoted-message="onQuotedMessageClick"
+          @swipe:left="onSwipeLeft(message)"
+          @longpress="onMessageLongPress(message)"
+        >
+          <template #avatar v-if="sender">
             <ChatAvatar :user-id="sender.id" use-public-key @click="onClickAvatar(sender.id)" />
           </template>
 
           <template #actions v-if="isRealMessage(message)">
             <AChatReactions @click="handleClickReactions(message)" :transaction="message" />
 
-            <AChatMessageActionsDropdown
+            <ChatMessageActions
               :transaction="message"
               :open="actionsDropdownMessageId === message.id"
+              :show-emoji-picker="showEmojiPicker"
               @open:change="toggleActionsDropdown"
-              @click:reply="openReplyPreview(message)"
-              @click:copy="copyMessageToClipboard(message)"
-            >
-              <template #top>
-                <EmojiPicker
-                  v-if="showEmojiPicker"
-                  @emoji:select="(emoji) => onEmojiSelect(message.id, emoji)"
-                  elevation
-                  position="absolute"
-                />
-
-                <AChatReactionSelect
-                  v-else
-                  :transaction="message"
-                  @reaction:add="sendReaction"
-                  @reaction:remove="removeReaction"
-                  @click:emoji-picker="showEmojiPicker = true"
-                />
-              </template>
-
-              <template #bottom>
-                <AChatMessageActionsList
-                  v-if="!showEmojiPicker"
-                  @click:reply="openReplyPreview(message)"
-                  @click:copy="copyMessageToClipboard(message)"
-                />
-              </template>
-            </AChatMessageActionsDropdown>
+              @click:reply="openReplyPreview"
+              @click:copy="copyMessageToClipboard"
+              @reaction:add="sendReaction"
+              @reaction:remove="removeReaction"
+              @emoji:select="onEmojiSelect"
+              @update:show-emoji-picker="showEmojiPicker = $event"
+            />
           </template>
-        </a-chat-message>
+        </a-chat-attachment>
+
         <a-chat-transaction
           v-else-if="isTransaction(message.type)"
           :transaction="message"
-          :crypto="message.type"
-          :tx-timestamp="getTransaction(message.type, message.hash).timestamp"
-          :status="getTransactionStatus(message)"
           :flashing="flashingMessageId === message.id"
           :data-id="message.id"
           :swipe-disabled="isWelcomeMessage(message)"
           @click:transaction="openTransaction(message)"
-          @click:transactionStatus="updateTransactionStatus(message)"
-          @mount="fetchTransactionStatus(message, partnerId)"
           @click:quoted-message="onQuotedMessageClick"
           @swipe:left="onSwipeLeft(message)"
           @longpress="onMessageLongPress(message)"
@@ -165,64 +198,53 @@
           <template #actions v-if="isRealMessage(message)">
             <AChatReactions @click="handleClickReactions(message)" :transaction="message" />
 
-            <AChatMessageActionsDropdown
+            <ChatMessageActions
               :transaction="message"
               :open="actionsDropdownMessageId === message.id"
+              :show-emoji-picker="showEmojiPicker"
               @open:change="toggleActionsDropdown"
-              @click:reply="openReplyPreview(message)"
-              @click:copy="copyMessageToClipboard(message)"
-            >
-              <template #top>
-                <EmojiPicker
-                  v-if="showEmojiPicker"
-                  @emoji:select="(emoji) => onEmojiSelect(message.id, emoji)"
-                  elevation
-                  position="absolute"
-                />
-
-                <AChatReactionSelect
-                  v-else
-                  :transaction="message"
-                  @reaction:add="sendReaction"
-                  @reaction:remove="removeReaction"
-                  @click:emoji-picker="showEmojiPicker = true"
-                />
-              </template>
-
-              <template #bottom>
-                <AChatMessageActionsList
-                  v-if="!showEmojiPicker"
-                  @click:reply="openReplyPreview(message)"
-                  @click:copy="copyMessageToClipboard(message)"
-                />
-              </template>
-            </AChatMessageActionsDropdown>
+              @click:reply="openReplyPreview"
+              @click:copy="copyMessageToClipboard"
+              @reaction:add="sendReaction"
+              @reaction:remove="removeReaction"
+              @emoji:select="onEmojiSelect"
+              @update:show-emoji-picker="showEmojiPicker = $event"
+            />
           </template>
         </a-chat-transaction>
       </template>
 
       <template #form>
         <a-chat-form
-          v-if="!isWelcomeChat(partnerId)"
-          ref="chatForm"
+          ref="chatFormRef"
           :show-send-button="true"
           :send-on-enter="sendMessageOnEnter"
           :show-divider="true"
-          :label="$t('chats.message')"
-          :message-text="
-            $route.query.messageText || $store.getters['draftMessage/draftMessage'](this.partnerId)
-          "
+          :label="t('chats.message')"
+          :should-disable-input="isWelcomeChat(partnerId) || publicKeyDisable"
+          :message-text="messageText"
           @message="onMessage"
           @error="onMessageError"
           @esc="replyMessageId = -1"
-          :validator="messageValidator.bind(this)"
+          :validator="validateMessage"
           :partner-id="partnerId"
         >
           <template #append>
             <chat-menu
+              v-model="isMenuOpen"
               class="chat-menu"
               :partner-id="partnerId"
-              :reply-to-id="replyMessageId > -1 ? replyMessageId : undefined"
+              :reply-to-id="replyMessageId !== -1 ? replyMessageId : undefined"
+              @files="handleAttachments"
+            />
+          </template>
+
+          <template #preview-file>
+            <FilesPreview
+              v-if="attachments.list.length > 0"
+              :files="attachments.list"
+              @remove-item="attachments.remove"
+              @cancel="cancelPreviewFile"
             />
           </template>
 
@@ -245,35 +267,39 @@
           color="primary"
           :content="numOfNewMessages > 0 ? numOfNewMessages : undefined"
         >
-          <v-btn
-            class="ma-0 grey--text"
-            color="grey lighten-3"
-            icon
-            depressed
-            fab
-            size="small"
-            @click="$refs.chat.scrollToBottom()"
-          >
-            <v-icon icon="mdi-chevron-down" size="x-large" />
+          <v-btn icon fab size="small" @click="chatRef.scrollToBottom()">
+            <v-icon :icon="mdiChevronDown" size="xx-large" />
           </v-btn>
         </v-badge>
       </template>
     </a-chat>
-    <ProgressIndicator :show="replyLoadingChatHistory" />
+    <ProgressIndicator v-if="replyLoadingChatHistory" />
   </v-card>
 </template>
 
-<script>
-import AChatMessageActionsList from '@/components/AChat/AChatMessageActionsList.vue'
+<script lang="ts" setup>
 import AChatReactions from '@/components/AChat/AChatReactions/AChatReactions.vue'
+import { FileData } from '@/lib/files'
 import { emojiWeight } from '@/lib/chat/emoji-weight/emojiWeight'
+import { NormalizedChatMessageTransaction } from '@/lib/chat/helpers'
 import { vibrate } from '@/lib/vibrate'
-import { nextTick } from 'vue'
+import { useAttachments } from '@/stores/attachments'
+import { computed, nextTick, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Visibility from 'visibilityjs'
 import copyToClipboard from 'copy-to-clipboard'
+import { logger } from '@/utils/devTools/logger'
+import { isStringEqualCI } from '@/lib/textHelpers'
 
-import { Cryptos, Fees } from '@/lib/constants'
+import {
+  Cryptos,
+  Fees,
+  UPLOAD_MAX_FILE_COUNT,
+  UPLOAD_MAX_FILE_SIZE,
+  CHAT_MESSAGE_BUBBLE_TIME_OFFSET
+} from '@/lib/constants'
 import EmojiPicker from '@/components/EmojiPicker.vue'
+
+import { mdiChevronDown } from '@mdi/js'
 
 import {
   AChat,
@@ -282,42 +308,31 @@ import {
   AChatForm,
   AChatReplyPreview,
   AChatMessageActionsMenu,
-  AChatMessageActionsDropdown,
   AChatActionsOverlay,
-  AChatReactionSelect
+  AChatReactionSelect,
+  AChatMessageStatusNote,
+  FilesPreview
 } from '@/components/AChat'
+import ChatMessageActions from './ChatMessageActions.vue'
 import ChatToolbar from '@/components/Chat/ChatToolbar.vue'
 import ChatAvatar from '@/components/Chat/ChatAvatar.vue'
 import ChatMenu from '@/components/Chat/ChatMenu.vue'
-import transaction from '@/mixins/transaction'
-import partnerName from '@/mixins/partnerName'
-import formatDate from '@/filters/date'
 import CryptoIcon from '@/components/icons/CryptoIcon.vue'
 import FreeTokensDialog from '@/components/FreeTokensDialog.vue'
-import { isStringEqualCI } from '@/lib/textHelpers'
 import { isMobile } from '@/lib/display-mobile'
-import { isWelcomeChat, isWelcomeMessage } from '@/lib/chat/meta/utils'
+import { isAdamantChat, isWelcomeChat, isWelcomeMessage } from '@/lib/chat/meta/utils'
+import AChatAttachment from '@/components/AChat/AChatAttachment/AChatAttachment.vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
+import { useStore } from 'vuex'
+import { useChatsSpinner } from '@/hooks/useChatsSpinner'
 import ProgressIndicator from '@/components/ProgressIndicator.vue'
-
-/**
- * Returns user meta by userId.
- * @param {string} userId
- * @returns {User} See `packages/chat/src/types.ts`
- */
-function getUserMeta(userId) {
-  const user = {
-    id: userId,
-    name: ''
-  }
-
-  if (isStringEqualCI(userId, this.userId)) {
-    user.name = this.$t('chats.you')
-  } else {
-    user.name = this.getPartnerName(userId)
-  }
-
-  return user
-}
+import { useChatStateStore } from '@/stores/modal-state'
+import ChatPlaceholder from '@/components/Chat/ChatPlaceholder.vue'
+import { CHAT_CONNECTION_SPINNER_SIZE } from '@/components/Chat/helpers/uiMetrics'
+import { watchImmediate } from '@vueuse/core'
+import { NodeStatusResult } from '@/lib/nodes/abstract.node'
+import { usePublicKeyFetch } from '@/components/Chat/composables/usePublicKeyFetch'
 
 const validationErrors = {
   emptyMessage: 'EMPTY_MESSAGE',
@@ -325,19 +340,320 @@ const validationErrors = {
   notEnoughFundsNewAccount: 'NON_ENOUGH_FUNDS_NEW_ACCOUNT',
   messageTooLong: 'MESSAGE_LENGTH_EXCEED'
 }
+
+const props = defineProps({
+  partnerId: {
+    type: String,
+    required: true
+  }
+})
+const emit = defineEmits(['click:chat-avatar'])
+
+const route = useRoute()
+const router = useRouter()
+const store = useStore()
+const { t, te, locale } = useI18n()
+const showSpinner = useChatsSpinner()
+const currentLocale = computed(() => String(locale.value))
+
+const messageText = computed(() => {
+  const queryMessageText = route.query.messageText
+  const routeMessageText = Array.isArray(queryMessageText) ? queryMessageText[0] : queryMessageText
+  const draftMessage = store.getters['draftMessage/draftMessage'](props.partnerId)
+
+  return routeMessageText ?? draftMessage ?? ''
+})
+
+const isMenuOpen = ref(false)
+
+const dateRefreshKey = ref(0)
+const lastVisibleDate = ref(new Date().toDateString())
+
+const attachments = useAttachments(props.partnerId)()
+const handleAttachments = (files: FileData[]) => {
+  const maxFileSizeExceeded = files.some(({ file }) => file.size >= UPLOAD_MAX_FILE_SIZE)
+  const maxFileCountExceeded = attachments.list.length + files.length > UPLOAD_MAX_FILE_COUNT
+
+  attachments.add(files)
+
+  if (maxFileCountExceeded) {
+    store.dispatch('snackbar/show', {
+      message: t('chats.max_files', { count: UPLOAD_MAX_FILE_COUNT })
+    })
+  } else if (maxFileSizeExceeded) {
+    store.dispatch('snackbar/show', {
+      message: t('chats.max_file_size', { count: UPLOAD_MAX_FILE_SIZE })
+    })
+  }
+
+  chatFormRef.value.focus()
+}
+const hasAttachment = computed(() => attachments.list.length > 0)
+
+const loading = ref(false)
+const replyLoadingChatHistory = ref(false)
+const noMoreMessages = ref(false)
+const isScrolledToBottom = ref(true)
+const visibilityId = ref<number | boolean | null>(null)
+const flashingMessageId = ref<string | -1>(-1)
+const actionsMenuMessageId = ref<string | -1>(-1)
+const replyMessageId = ref<string | -1>(-1)
+const showEmojiPicker = ref(false)
+const {
+  isGettingPublicKey,
+  isKeyMissing,
+  shouldDisableInput: publicKeyDisable,
+  createChat
+} = usePublicKeyFetch(props.partnerId)
+
+// to handle loading spinner and allow fetching messages while the spinner is shown
+// in case of connection troubles while first fetching
+const allowFetchingMessages = ref(true)
+
+const chatStateStore = useChatStateStore()
+
+const { setShowFreeTokensDialog, setActionsDropdownMessageId } = chatStateStore
+
+const isShowFreeTokensDialog = computed({
+  get: () => chatStateStore.isShowFreeTokensDialog,
+  set: setShowFreeTokensDialog
+})
+
+const actionsDropdownMessageId = computed({
+  get: () => chatStateStore.actionsDropdownMessageId,
+  set: setActionsDropdownMessageId
+})
+
+const messages = computed(() => store.getters['chat/messages'](props.partnerId))
+const userMessages = computed(() =>
+  messages.value.filter(
+    (message: NormalizedChatMessageTransaction) => message.senderId === userId.value
+  )
+)
+const userId = computed(() => store.state.address)
+const isNewChat = computed(() => store.getters['chat/isNewChat'](props.partnerId))
+const groupedMessages = computed(() => {
+  if (!messages.value.length) return []
+
+  const result: NormalizedChatMessageTransaction[] = []
+  let group: NormalizedChatMessageTransaction[] = []
+
+  messages.value.forEach((msg: NormalizedChatMessageTransaction, index: number) => {
+    const prevMsg = messages.value[index - 1]
+    const nextMsg = messages.value[index + 1]
+
+    const isSameGroupAsPrev =
+      prevMsg &&
+      msg.senderId === prevMsg.senderId &&
+      msg.timestamp - prevMsg.timestamp < CHAT_MESSAGE_BUBBLE_TIME_OFFSET
+    const isSameGroupAsNext =
+      nextMsg &&
+      msg.senderId === nextMsg.senderId &&
+      nextMsg.timestamp - msg.timestamp < CHAT_MESSAGE_BUBBLE_TIME_OFFSET
+
+    msg.showTime = !isSameGroupAsPrev
+
+    msg.showBubble = false
+
+    group.push(msg)
+
+    if (!isSameGroupAsNext) {
+      group[group.length - 1].showBubble = true
+      result.push(...group)
+      group = []
+    }
+  })
+
+  return result
+})
+
+const getPartnerName = (address: string) => {
+  const name: string = store.getters['partners/displayName'](address) || ''
+
+  return isAdamantChat(address) ? (te(name) ? t(name) : name || address) : name
+}
+const getUserMeta = (address: string) => ({
+  id: address,
+  name: address === userId.value ? t('chats.you') : getPartnerName(address)
+})
+const partners = computed(() => [getUserMeta(userId.value), getUserMeta(props.partnerId)])
+const sendMessageOnEnter = computed<boolean>(() => store.state.options.sendMessageOnEnter)
+const isFulfilled = computed<boolean>(() => store.state.chat.isFulfilled)
+const lastMessage = computed<NormalizedChatMessageTransaction>(() =>
+  store.getters['chat/lastMessage'](props.partnerId)
+)
+const chatPage = computed<number>(() => store.getters['chat/chatPage'](props.partnerId))
+const scrollPosition = computed<number | false>(() =>
+  store.getters['chat/scrollPosition'](props.partnerId)
+)
+
+const numOfNewMessages = computed<number>(() =>
+  store.getters['chat/numOfNewMessages'](props.partnerId)
+)
+const replyMessage = computed<NormalizedChatMessageTransaction>(() =>
+  store.getters['chat/messageById'](replyMessageId.value)
+)
+const actionMessage = computed<NormalizedChatMessageTransaction>(() =>
+  store.getters['chat/messageById'](actionsMenuMessageId.value)
+)
+const admNodes = computed<NodeStatusResult[]>(() => store.getters['nodes/adm'])
+const areAdmNodesOnline = computed(() => admNodes.value.some((node) => node.status === 'online'))
+
+const allowPlaceholder = computed(
+  () =>
+    !isWelcomeChat(props.partnerId) &&
+    (isNewChat.value || chatPage.value >= 1 || isAdamantChat(props.partnerId))
+)
+
+const showNewChatPlaceholder = ref(false)
+
+const chatFormRef = ref<any>(null) // @todo type
+const chatRef = ref<any>(null) // @todo type
+const fetchMessagesTimeoutId = ref<ReturnType<typeof setTimeout> | null>(null)
+
+// Scroll to the bottom every time window focused by desktop notification
+watch(
+  () => store.state.notification.desktopActivateClickCount,
+  () => {
+    nextTick(() => {
+      chatRef.value.scrollToBottom()
+    })
+  }
+)
+
+watch(lastMessage, () => {
+  nextTick(() => {
+    if (isScrolledToBottom.value) {
+      chatRef.value.scrollToBottom()
+    }
+
+    if (!Visibility.hidden() && isScrolledToBottom.value) markAsRead()
+  })
+})
+
+watch(isFulfilled, (value) => {
+  if (value && (!chatPage.value || chatPage.value <= 0)) fetchChatMessages()
+})
+
+watch(replyMessageId, (messageId) => {
+  router.replace({
+    name: 'Chat',
+    query: {
+      replyToId: messageId === -1 ? undefined : messageId
+    }
+  })
+})
+
+watch(areAdmNodesOnline, async (nodesOnline) => {
+  if (!nodesOnline) return
+
+  if (loading.value && allowFetchingMessages.value) {
+    await fetchChatMessages()
+  }
+})
+
+watchImmediate(messages, (updatedMessages) => {
+  if (isFulfilled.value && !updatedMessages.length) {
+    store.commit('chat/addNewChat', { partnerId: props.partnerId })
+  }
+})
+
+onBeforeMount(() => {
+  const cachedMessages: NormalizedChatMessageTransaction[] = store.getters['chat/messages'](
+    props.partnerId
+  )
+
+  const chatExists = !!store.state.chat.chats[props.partnerId]
+  const noMessagesAtAll = cachedMessages.length === 0
+
+  // chatOffset check - for adamant chats (e.g. donation, Adelina) because they might have chatPage = 0
+  const loadedOnce = chatPage.value >= 1 || store.getters['chat/chatOffset'](props.partnerId) === -1
+  const hasUserMessages = cachedMessages.some((message) => message.senderId === userId.value)
+
+  if (isNewChat.value || (chatExists && (noMessagesAtAll || (loadedOnce && !hasUserMessages)))) {
+    showNewChatPlaceholder.value = true
+  }
+
+  window.addEventListener('keydown', onKeyPress)
+})
+
+onMounted(async () => {
+  if (isFulfilled.value && chatPage.value <= 0) {
+    await fetchChatMessages()
+  }
+
+  await handleEmptyChat()
+
+  scrollBehavior()
+  nextTick(() => {
+    if (!chatRef.value) return
+    isScrolledToBottom.value = chatRef.value.isScrolledToBottom()
+  })
+  visibilityId.value = Visibility.change((event, state) => {
+    if (state === 'visible') {
+      const currentDate = new Date().toDateString()
+
+      if (currentDate !== lastVisibleDate.value) {
+        dateRefreshKey.value = Date.now()
+        lastVisibleDate.value = currentDate
+      }
+
+      nextTick(() => {
+        chatRef.value?.maintainScrollPosition()
+      })
+
+      if (isScrolledToBottom.value) markAsRead()
+    }
+  })
+
+  const draftMessage = store.getters['draftMessage/draftReplyTold'](props.partnerId)
+  if (draftMessage) {
+    replyMessageId.value = draftMessage
+  }
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeyPress)
+  Visibility.unbind(Number(visibilityId.value))
+  if (fetchMessagesTimeoutId.value) {
+    clearTimeout(fetchMessagesTimeoutId.value)
+  }
+})
+
+const handleEmptyChat = async () => {
+  if (!messages.value.length && !store.state.chat.chats[props.partnerId]) {
+    store.commit('chat/addNewChat', { partnerId: props.partnerId })
+  }
+
+  if (
+    isNewChat.value ||
+    (!store.state.publicKeys[props.partnerId] && !isWelcomeChat(props.partnerId))
+  ) {
+    const partnerName = store.getters['chat/getPartnerName'](props.partnerId)
+    createChat(partnerName)
+  }
+}
+
 /**
  * Validate message before sending.
- * @param {string} message
- * @returns {string | false} If `false` then validation passed without errors.
+ * @param message
+ * @returns If `false` then validation passed without errors.
  */
-function validateMessage(message) {
+const validateMessage = (message: string): string | false => {
+  if (hasAttachment.value) {
+    // When attaching files, the message is not mandatory
+    return false
+  }
+
   // Ensure that message contains at least one non-whitespace character
   if (!message.trim().length) {
     return validationErrors.emptyMessage
   }
 
-  if (this.$store.state.balance < Fees.NOT_ADM_TRANSFER) {
-    if (this.$store.getters.isAccountNew()) {
+  const isNewAccount = store.getters.isAccountNew()
+  const balance = isNewAccount ? store.state.unconfirmedBalance : store.state.balance
+
+  if (balance < Fees.NOT_ADM_TRANSFER) {
+    if (isNewAccount) {
       return validationErrors.notEnoughFundsNewAccount
     } else {
       return validationErrors.notEnoughFunds
@@ -351,453 +667,425 @@ function validateMessage(message) {
   return false
 }
 
-export default {
-  components: {
-    AChatMessageActionsList,
-    AChatReactions,
-    AChatReplyPreview,
-    AChat,
-    AChatMessage,
-    AChatTransaction,
-    AChatForm,
-    ChatToolbar,
-    ChatAvatar,
-    ChatMenu,
-    CryptoIcon,
-    FreeTokensDialog,
-    ProgressIndicator,
-    AChatMessageActionsMenu,
-    AChatMessageActionsDropdown,
-    AChatActionsOverlay,
-    AChatReactionSelect,
-    EmojiPicker
-  },
-  mixins: [transaction, partnerName],
-  props: {
-    partnerId: {
-      type: String,
-      required: true
-    }
-  },
-  emits: ['click:chat-avatar'],
-  data: () => ({
-    loading: false,
-    replyLoadingChatHistory: false,
-    noMoreMessages: false,
-    isScrolledToBottom: true,
-    visibilityId: null,
-    showFreeTokensDialog: false,
-    flashingMessageId: -1,
+const onMessage = (message: string) => {
+  sendMessage(message)
+  replyMessageId.value = -1
+  attachments.$reset()
+  setTimeout(() => chatRef.value.scrollToBottom())
+}
+const cancelPreviewFile = () => {
+  attachments.$reset()
+}
+const onMessageError = (error: string) => {
+  switch (error) {
+    case validationErrors.notEnoughFundsNewAccount:
+      setShowFreeTokensDialog(true)
+      return
+    case validationErrors.notEnoughFunds:
+      store.dispatch('snackbar/show', { message: t('chats.no_money') })
+      return
+    case validationErrors.messageTooLong:
+      store.dispatch('snackbar/show', {
+        message: t('chats.too_long')
+      })
+      return
+  }
+}
 
-    actionsMenuMessageId: -1,
-    actionsDropdownMessageId: -1,
-    replyMessageId: -1,
-    showEmojiPicker: false
-  }),
-  computed: {
-    /**
-     * Returns array of transformed messages.
-     * @returns {Message[]}
-     */
-    messages() {
-      return this.$store.getters['chat/messages'](this.partnerId)
-    },
-    /**
-     * Returns array of partners who participate in chat.
-     * @returns {User[]}
-     */
-    partners() {
-      return [getUserMeta.call(this, this.userId), getUserMeta.call(this, this.partnerId)]
-    },
-    userId() {
-      return this.$store.state.address
-    },
-    sendMessageOnEnter() {
-      return this.$store.state.options.sendMessageOnEnter
-    },
-    isFulfilled() {
-      return this.$store.state.chat.isFulfilled
-    },
-    lastMessage() {
-      return this.$store.getters['chat/lastMessage'](this.partnerId)
-    },
-    chatPage() {
-      return this.$store.getters['chat/chatPage'](this.partnerId)
-    },
-    scrollPosition() {
-      return this.$store.getters['chat/scrollPosition'](this.partnerId)
-    },
-    numOfNewMessages() {
-      return this.$store.getters['chat/numOfNewMessages'](this.partnerId)
-    },
-    replyMessage() {
-      return this.$store.getters['chat/messageById'](this.replyMessageId)
-    },
-    actionMessage() {
-      return this.$store.getters['chat/messageById'](this.actionsMenuMessageId)
-    }
-  },
-  watch: {
-    // Scroll to the bottom every time window focused by desktop notification
-    '$store.state.notification.desktopActivateClickCount'() {
-      nextTick(() => {
-        this.$refs.chat.scrollToBottom()
-      })
-    },
-    // scroll to bottom when received new message
-    lastMessage() {
-      nextTick(() => {
-        if (this.isScrolledToBottom) {
-          this.$refs.chat.scrollToBottom()
-        }
+const cancelReplyMessage = () => {
+  replyMessageId.value = -1
+  store.commit('draftMessage/deleteReplyTold', {
+    replyToId: replyMessageId.value,
+    partnerId: props.partnerId
+  })
+}
 
-        if (!Visibility.hidden() && this.isScrolledToBottom) this.markAsRead()
-      })
-    },
-    // watch `isFulfilled` when opening chat directly from address bar
-    isFulfilled(value) {
-      if (value && (!this.chatPage || this.chatPage <= 0)) this.fetchChatMessages()
-    },
-    replyMessageId(messageId) {
-      this.$router.replace({
-        name: 'Chat',
-        query: {
-          replyToId: messageId === -1 ? undefined : messageId
-        }
-      })
-    }
-  },
-  created() {
-    window.addEventListener('keyup', this.onKeyPress)
-  },
-  beforeUnmount() {
-    window.removeEventListener('keyup', this.onKeyPress)
-    Visibility.unbind(this.visibilityId)
-  },
-  mounted() {
-    if (this.isFulfilled && this.chatPage <= 0) this.fetchChatMessages()
-    this.scrollBehavior()
-    nextTick(() => {
-      this.isScrolledToBottom = this.$refs.chat.isScrolledToBottom()
-    })
-    this.visibilityId = Visibility.change((event, state) => {
-      if (state === 'visible' && this.isScrolledToBottom) this.markAsRead()
+const sendMessage = (message: string) => {
+  store.dispatch('draftMessage/deleteDraft', { partnerId: props.partnerId })
+  const replyToId = replyMessageId.value !== -1 ? replyMessageId.value : undefined
+
+  if (attachments.list.length > 0) {
+    store.dispatch('chat/sendAttachment', {
+      files: attachments.list,
+      message,
+      recipientId: props.partnerId,
+      replyToId
     })
 
-    const draftMessage = this.$store.getters['draftMessage/draftReplyTold'](this.partnerId)
-    if (draftMessage) {
-      this.replyMessageId = draftMessage
+    return
+  }
+
+  return store
+    .dispatch('chat/sendMessage', {
+      message,
+      recipientId: props.partnerId,
+      replyToId
+    })
+    .catch((err) => {
+      logger.log('chat', 'warn', err.message)
+    })
+}
+
+const resendMessage = (recipientId: string, messageId: string) => {
+  return store.dispatch('chat/resendMessage', { recipientId, messageId }).catch((err) => {
+    store.dispatch('snackbar/show', {
+      message: err.message
+    })
+    logger.log('chat', 'warn', err.message)
+  })
+}
+
+const retryRejectedMessage = (message: NormalizedChatMessageTransaction) => {
+  closeActionsMenu()
+  closeActionsDropdown()
+
+  return resendMessage(props.partnerId, message.id)
+}
+
+const sendReaction = (reactToId: string, emoji: string) => {
+  closeActionsMenu()
+  closeActionsDropdown()
+  emojiWeight.addReaction(emoji)
+  return store.dispatch('chat/sendReaction', {
+    recipientId: props.partnerId,
+    reactToId,
+    reactMessage: emoji
+  })
+}
+
+const removeReaction = (reactToId: string, emoji: string) => {
+  closeActionsMenu()
+  closeActionsDropdown()
+  emojiWeight.removeReaction(emoji)
+  return store.dispatch('chat/sendReaction', {
+    recipientId: props.partnerId,
+    reactToId,
+    reactMessage: ''
+  })
+}
+
+const onEmojiSelect = (transactionId: string, emoji: string) => {
+  sendReaction(transactionId, emoji)
+}
+
+const markAsRead = () => {
+  store.commit('chat/markAsRead', props.partnerId)
+}
+
+const onScrollTop = async () => {
+  fetchChatMessages()
+}
+
+const onScrollBottom = () => {
+  markAsRead()
+}
+
+const onScroll = (scrollPosition: number, isBottom: boolean) => {
+  isScrolledToBottom.value = isBottom
+  store.commit('chat/updateScrollPosition', {
+    contactId: props.partnerId,
+    scrollPosition
+  })
+}
+
+const onClickAvatar = (address: string) => {
+  emit('click:chat-avatar', address)
+}
+
+const onQuotedMessageClick = async (transactionId: string) => {
+  let transactionIndex = store.getters['chat/indexOfMessage'](props.partnerId, transactionId)
+
+  // if the message is not present in the store
+  // fetch chat history until reach that message
+  if (transactionIndex === -1) {
+    await fetchUntilFindTransaction(transactionId)
+
+    transactionIndex = store.getters['chat/indexOfMessage'](props.partnerId, transactionId)
+  }
+
+  // if after fetching chat history the message still cannot be found
+  // then do nothing
+  if (transactionIndex === -1) {
+    logger.log(
+      'Chat',
+      'warn',
+      'onQuotedMessageClick: Transaction not found in the chat history',
+      `tx.id="${transactionId}"`
+    )
+    return
+  }
+
+  if (chatRef.value) {
+    await chatRef.value.scrollToMessageEasy(transactionIndex)
+  }
+  highlightMessage(transactionId)
+}
+
+const onMessageLongPress = (transaction: NormalizedChatMessageTransaction) => {
+  if (isWelcomeMessage(transaction)) return
+
+  openActionsMenu(transaction)
+  vibrate.veryShort()
+}
+
+const onSwipeLeft = (message: NormalizedChatMessageTransaction) => {
+  if (isWelcomeMessage(message)) return
+
+  openReplyPreview(message)
+  vibrate.veryShort()
+}
+
+const isRejectedOutgoingMessage = (transaction: NormalizedChatMessageTransaction) =>
+  transaction.type === 'message' &&
+  transaction.status === 'REJECTED' &&
+  isStringEqualCI(transaction.senderId, store.state.address)
+
+const openActionsMenu = (transaction: NormalizedChatMessageTransaction) => {
+  showEmojiPicker.value = false
+  actionsMenuMessageId.value = transaction.id
+}
+
+const closeActionsMenu = () => {
+  actionsMenuMessageId.value = -1
+  showEmojiPicker.value = false
+}
+
+const openActionsDropdown = (transaction: NormalizedChatMessageTransaction) => {
+  showEmojiPicker.value = false
+  actionsDropdownMessageId.value = transaction.id
+}
+
+const closeActionsDropdown = () => {
+  actionsDropdownMessageId.value = -1
+  showEmojiPicker.value = false
+}
+
+const toggleActionsDropdown = (open: boolean, transaction: NormalizedChatMessageTransaction) => {
+  if (open) {
+    openActionsDropdown(transaction)
+  } else {
+    closeActionsDropdown()
+  }
+}
+
+const handleClickReactions = (transaction: NormalizedChatMessageTransaction) => {
+  if (isMobile()) {
+    openActionsMenu(transaction)
+  } else {
+    toggleActionsDropdown(true, transaction)
+  }
+}
+
+const openStatusActions = (transaction: NormalizedChatMessageTransaction) => {
+  if (isMobile()) {
+    openActionsMenu(transaction)
+  } else {
+    toggleActionsDropdown(true, transaction)
+  }
+}
+
+const openReplyPreview = (message: NormalizedChatMessageTransaction) => {
+  closeActionsMenu()
+  closeActionsDropdown()
+
+  replyMessageId.value = message.id
+  chatFormRef.value.focus()
+  store.commit('draftMessage/saveReplyToId', {
+    replyToId: message.id,
+    partnerId: props.partnerId
+  })
+}
+
+const copyMessageToClipboard = ({ message }: NormalizedChatMessageTransaction) => {
+  closeActionsMenu()
+  closeActionsDropdown()
+
+  copyToClipboard(message)
+  store.dispatch('snackbar/show', { message: t('home.copied'), timeout: 1000 })
+}
+
+const isRealMessage = (transaction: NormalizedChatMessageTransaction) => {
+  return !isWelcomeMessage(transaction)
+}
+
+const highlightMessage = (transactionId: string) => {
+  flashingMessageId.value = transactionId
+
+  setTimeout(() => {
+    flashingMessageId.value = -1
+  }, 1000)
+}
+
+const openTransaction = (transaction: NormalizedChatMessageTransaction) => {
+  if (transaction.type in Cryptos) {
+    router.push({
+      name: 'Transaction',
+      params: {
+        crypto: transaction.type,
+        txId: transaction.hash
+      },
+      query: {
+        fromChat: 'true',
+        from: `/chats/${props.partnerId}`
+      }
+    })
+  }
+}
+
+const isTransaction = (type: string) => {
+  return type in Cryptos || type === 'UNKNOWN_CRYPTO'
+}
+
+const fetchChatMessages = async () => {
+  if (noMoreMessages.value) return
+  if (loading.value && !allowFetchingMessages.value) return
+
+  loading.value = true
+
+  try {
+    await store.dispatch('chat/getChatRoomMessages', { contactId: props.partnerId })
+    showNewChatPlaceholder.value = allowPlaceholder.value && !userMessages.value.length
+    loading.value = false
+    allowFetchingMessages.value = false
+
+    if (store.getters['chat/chatOffset'](props.partnerId) === -1) {
+      noMoreMessages.value = true
     }
-  },
-  methods: {
-    messageValidator: validateMessage,
-    onMessage(message) {
-      this.sendMessage(message)
-      nextTick(() => this.$refs.chat.scrollToBottom())
-      this.replyMessageId = -1
-    },
-    onMessageError(error) {
-      switch (error) {
-        case validationErrors.notEnoughFundsNewAccount:
-          this.showFreeTokensDialog = true
-          return
-        case validationErrors.notEnoughFunds:
-          this.$store.dispatch('snackbar/show', { message: this.$t('chats.no_money') })
-          return
-        case validationErrors.messageTooLong:
-          this.$store.dispatch('snackbar/show', {
-            message: this.$t('chats.too_long')
-          })
-          return
-      }
-    },
-    cancelReplyMessage() {
-      this.replyMessageId = -1
-      this.$store.commit('draftMessage/deleteReplyTold', {
-        replyToId: this.replyMessageId,
-        partnerId: this.partnerId
-      })
-    },
-    sendMessage(message) {
-      this.$store.dispatch('draftMessage/deleteDraft', { partnerId: this.partnerId })
-      const replyToId = this.replyMessageId > -1 ? this.replyMessageId : undefined
-
-      return this.$store
-        .dispatch('chat/sendMessage', {
-          message,
-          recipientId: this.partnerId,
-          replyToId
-        })
-        .catch((err) => {
-          console.error(err.message)
-        })
-    },
-    resendMessage(recipientId, messageId) {
-      return this.$store.dispatch('chat/resendMessage', { recipientId, messageId }).catch((err) => {
-        this.$store.dispatch('snackbar/show', {
-          message: err.message
-        })
-        console.error(err.message)
-      })
-    },
-    sendReaction(reactToId, emoji) {
-      this.closeActionsMenu()
-      this.closeActionsDropdown()
-
-      emojiWeight.addReaction(emoji)
-      vibrate.veryShort()
-
-      return this.$store.dispatch('chat/sendReaction', {
-        recipientId: this.partnerId,
-        reactToId,
-        reactMessage: emoji
-      })
-    },
-    removeReaction(reactToId, emoji) {
-      this.closeActionsMenu()
-      this.closeActionsDropdown()
-
-      emojiWeight.removeReaction(emoji)
-
-      return this.$store.dispatch('chat/sendReaction', {
-        recipientId: this.partnerId,
-        reactToId,
-        reactMessage: ''
-      })
-    },
-    onEmojiSelect(transactionId, emoji) {
-      this.sendReaction(transactionId, emoji)
-    },
-    updateTransactionStatus(message) {
-      this.$store.dispatch(message.type.toLowerCase() + '/updateTransaction', {
-        hash: message.hash,
-        force: true,
-        updateOnly: false,
-        dropStatus: true
-      })
-    },
-    markAsRead() {
-      this.$store.commit('chat/markAsRead', this.partnerId)
-    },
-    onScrollTop() {
-      this.fetchChatMessages()
-    },
-    onScrollBottom() {
-      this.markAsRead()
-    },
-    onScroll(scrollPosition, isBottom) {
-      this.isScrolledToBottom = isBottom
-
-      this.$store.commit('chat/updateScrollPosition', {
-        contactId: this.partnerId,
-        scrollPosition
-      })
-    },
-    /**
-     * @param {string} address ADAMANT address
-     */
-    onClickAvatar(address) {
-      this.$emit('click:chat-avatar', address)
-    },
-    async onQuotedMessageClick(transactionId) {
-      let transactionIndex = this.$store.getters['chat/indexOfMessage'](
-        this.partnerId,
-        transactionId
-      )
-
-      // if the message is not present in the store
-      // fetch chat history until reach that message
-      if (transactionIndex === -1) {
-        await this.fetchUntilFindTransaction(transactionId)
-
-        transactionIndex = this.$store.getters['chat/indexOfMessage'](this.partnerId, transactionId)
-      }
-
-      // if after fetching chat history the message still cannot be found
-      // then do nothing
-      if (transactionIndex === -1) {
-        console.warn(
-          'onQuotedMessageClick: Transaction not found in the chat history',
-          `tx.id="${transactionId}"`
-        )
+  } catch {
+    if (store.getters['chat/chatOffset'](props.partnerId) !== -1) {
+      if (areAdmNodesOnline.value) {
+        // give health check time to be finished and then retry in case of miscoordination of nodes statuses
+        // (when areAdmNodesOnline says there are some nodes online, but the request fails with allNodesOffline error)
+        fetchMessagesTimeoutId.value = setTimeout(async () => {
+          await fetchChatMessages()
+        }, 5000)
         return
       }
 
-      await this.$refs.chat.scrollToMessageEasy(transactionIndex)
-      this.highlightMessage(transactionId)
-    },
-    /** touch devices **/
-    onMessageLongPress(transaction) {
-      if (isWelcomeMessage(transaction)) return
+      return (allowFetchingMessages.value = true)
+    }
+    loading.value = false
+  } finally {
+    if (isWelcomeChat(props.partnerId)) {
+      loading.value = false
+    }
+    chatRef.value?.maintainScrollPosition()
+  }
+}
+const fetchUntilFindTransaction = (transactionId: string) => {
+  const fetchMessages = async () => {
+    await store.dispatch('chat/getChatRoomMessages', { contactId: props.partnerId })
 
-      this.openActionsMenu(transaction)
-      vibrate.veryShort()
-    },
-    onSwipeLeft(message) {
-      if (isWelcomeMessage(message)) return
+    chatRef.value?.maintainScrollPosition()
 
-      this.openReplyPreview(message)
-      vibrate.veryShort()
-    },
-    openActionsMenu(transaction) {
-      this.actionsMenuMessageId = transaction.id
-    },
-    closeActionsMenu() {
-      this.actionsMenuMessageId = -1
-      this.showEmojiPicker = false
-    },
-    /** desktop **/
-    openActionsDropdown(transaction) {
-      this.actionsDropdownMessageId = transaction.id
-    },
-    closeActionsDropdown() {
-      this.actionsDropdownMessageId = -1
-      this.showEmojiPicker = false
-    },
-    toggleActionsDropdown(open, transaction) {
-      if (open) {
-        this.openActionsDropdown(transaction)
-      } else {
-        this.closeActionsDropdown()
-      }
-    },
-    handleClickReactions(transaction) {
-      if (isMobile()) {
-        this.openActionsMenu(transaction)
-      } else {
-        this.toggleActionsDropdown(true, transaction)
-      }
-    },
-    openReplyPreview(message) {
-      this.closeActionsMenu()
-      this.closeActionsDropdown()
+    const transactionFound = store.getters['chat/partnerMessageById'](
+      props.partnerId,
+      transactionId
+    )
+    if (transactionFound) return
 
-      this.replyMessageId = message.id
-      this.$refs.chatForm.focus()
-      this.$store.commit('draftMessage/saveReplyToId', {
-        replyToId: message.id,
-        partnerId: this.partnerId
-      })
-    },
-    copyMessageToClipboard({ message }) {
-      this.closeActionsMenu()
-      this.closeActionsDropdown()
-
-      copyToClipboard(message)
-      this.$store.dispatch('snackbar/show', { message: this.$t('home.copied'), timeout: 1000 })
-    },
-    isRealMessage(transaction) {
-      return !isWelcomeMessage(transaction)
-    },
-    /**
-     * Apply flash effect to a message in the chat
-     * @param transactionId
-     */
-    highlightMessage(transactionId) {
-      this.flashingMessageId = transactionId
-
-      setTimeout(() => {
-        this.flashingMessageId = -1
-      }, 1000)
-    },
-    openTransaction(transaction) {
-      if (transaction.type in Cryptos) {
-        this.$router.push({
-          name: 'Transaction',
-          params: {
-            crypto: transaction.type,
-            txId: transaction.hash
-          },
-          query: {
-            fromChat: true
-          }
-        })
-      }
-    },
-    isTransaction(type) {
-      return type in Cryptos || type === 'UNKNOWN_CRYPTO'
-    },
-    isCryptoSupported(type) {
-      return type in Cryptos
-    },
-    fetchChatMessages() {
-      if (this.noMoreMessages) return
-      if (this.loading) return
-
-      this.loading = true
-
-      return this.$store
-        .dispatch('chat/getChatRoomMessages', { contactId: this.partnerId })
-        .catch(() => {
-          this.noMoreMessages = true
-        })
-        .finally(() => {
-          this.loading = false
-          this.$refs.chat.maintainScrollPosition()
-        })
-    },
-    fetchUntilFindTransaction(transactionId) {
-      const fetchMessages = async () => {
-        await this.$store.dispatch('chat/getChatRoomMessages', { contactId: this.partnerId })
-
-        this.$refs.chat.maintainScrollPosition()
-
-        const transactionFound = this.$store.getters['chat/partnerMessageById'](
-          this.partnerId,
-          transactionId
-        )
-        if (transactionFound) return
-
-        if (this.$store.state.chat.offset > -1) {
-          await new Promise((resolve) => setTimeout(resolve, 200))
-          return fetchMessages()
-        }
-      }
-
-      this.replyLoadingChatHistory = true
-
+    if (store.state.chat.offset > -1) {
+      await new Promise((resolve) => setTimeout(resolve, 200))
       return fetchMessages()
-        .catch(() => {
-          this.noMoreMessages = true
-        })
-        .finally(() => {
-          this.replyLoadingChatHistory = false
-        })
-    },
-    scrollBehavior() {
-      nextTick(() => {
-        if (this.numOfNewMessages > 0) {
-          this.$refs.chat.scrollToMessage(this.numOfNewMessages - 1)
-        } else if (this.scrollPosition !== false) {
-          this.$refs.chat.scrollTo(this.scrollPosition)
-        } else {
-          this.$refs.chat.scrollToBottom()
-        }
+    }
+  }
 
-        this.markAsRead()
-      })
-    },
-    onKeyPress(e) {
-      if (e.code === 'Enter' && !this.showFreeTokensDialog) this.$refs.chatForm.focus()
-    },
-    formatDate,
-    isWelcomeChat,
-    isWelcomeMessage
+  replyLoadingChatHistory.value = true
+
+  return fetchMessages()
+    .catch(() => {
+      noMoreMessages.value = true
+    })
+    .finally(() => {
+      replyLoadingChatHistory.value = false
+    })
+}
+
+const scrollBehavior = () => {
+  nextTick(() => {
+    if (!chatRef.value) {
+      return
+    }
+    if (numOfNewMessages.value > 0) {
+      chatRef.value.scrollToMessage(numOfNewMessages.value - 1)
+    } else if (scrollPosition.value !== false) {
+      chatRef.value.scrollTo(scrollPosition.value)
+    } else {
+      chatRef.value.scrollToBottom()
+    }
+
+    markAsRead()
+  })
+}
+
+const hasFocusedEditableElement = () => {
+  const activeElement = document.activeElement
+
+  if (!(activeElement instanceof HTMLElement)) {
+    return false
+  }
+
+  if (activeElement instanceof HTMLTextAreaElement) {
+    return !activeElement.readOnly && !activeElement.disabled
+  }
+
+  if (activeElement instanceof HTMLInputElement) {
+    return !activeElement.readOnly && !activeElement.disabled
+  }
+
+  return activeElement.isContentEditable
+}
+
+const onKeyPress = (e: KeyboardEvent) => {
+  if (e.code === 'Enter' && !isShowFreeTokensDialog.value && !hasFocusedEditableElement()) {
+    e.preventDefault()
+    e.stopPropagation()
+    chatFormRef.value.focus()
   }
 }
 </script>
 
 <style scoped lang="scss">
+@use 'sass:map';
+@use 'sass:color';
+@use '@/assets/styles/settings/_colors.scss';
+
 .chat-menu {
-  margin-right: 8px;
+  margin-right: var(--a-space-3);
 }
 .chat {
-  height: 100vh;
+  height: var(--a-layout-height);
   box-shadow: none;
   background-color: transparent !important;
 }
 
 .chat-avatar {
-  margin-right: 12px;
+  margin-right: var(--a-space-1);
+}
+
+.chat__connection-spinner {
+  margin-left: var(--a-space-1);
+  margin-right: var(--a-space-4);
+}
+
+/** Themes **/
+.v-theme--light {
+  .connection-spinner {
+    color: map.get(colors.$adm-colors, 'grey');
+  }
+}
+
+.v-theme--dark {
+  .connection-spinner {
+    color: map.get(colors.$adm-colors, 'regular');
+  }
+}
+
+:deep(.v-badge .v-btn) {
+  z-index: 1;
+  color: map.get(colors.$adm-colors, 'primary');
+  border-radius: 50%;
+  background-color: color.adjust(map.get(colors.$adm-colors, 'primary2'), $alpha: -0.7);
+  box-shadow: none;
 }
 </style>

@@ -9,12 +9,12 @@
       <NodeVersion v-if="node.version && active" :node="node" />
     </NodeColumn>
 
-    <NodeColumn :colspan="!showSocketColumn ? 2 : 1">
-      <NodeStatus :node="node" />
+    <NodeColumn :class="classes.columnStatus">
+      <NodeStatus :node="node" @show-http-info="$emit('showHttpInfo')" />
     </NodeColumn>
 
-    <NodeColumn v-if="showSocketColumn">
-      <SocketSupport :node="node" />
+    <NodeColumn>
+      <SocketSupport v-if="showSocketColumn" :node="node" />
     </NodeColumn>
   </tr>
 </template>
@@ -34,11 +34,13 @@ const className = 'amd-nodes-table-item'
 const classes = {
   root: className,
   column: `${className}__column`,
+  columnStatus: `${className}__column--status`,
   columnCheckbox: `${className}__column--checkbox`,
   checkbox: `${className}__checkbox`
 }
 
 export default {
+  emits: ['showHttpInfo'],
   components: {
     NodeStatusCheckbox,
     NodeColumn,
@@ -58,10 +60,12 @@ export default {
 
     const url = computed(() => props.node.url)
     const active = computed(() => props.node.active)
-    const socketSupport = computed(() => props.node.socketSupport)
     const isUnsupported = computed(() => props.node.status === 'unsupported_version')
+    const isOffline = computed(() => props.node.status === 'offline')
     const type = computed(() => props.node.type)
-    const showSocketColumn = computed(() => active.value && !isUnsupported.value)
+    const showSocketColumn = computed(
+      () => active.value && !isUnsupported.value && !isOffline.value
+    )
 
     const toggleActiveStatus = () => {
       store.dispatch('nodes/toggle', {
@@ -105,8 +109,6 @@ export default {
       classes,
       url,
       active,
-      socketSupport,
-      isUnsupported,
       showSocketColumn,
       toggleActiveStatus,
       computedResult
@@ -117,6 +119,10 @@ export default {
 
 <style lang="scss">
 .amd-nodes-table-item {
-  line-height: 14px;
+  line-height: var(--a-font-size-sm);
+
+  &__column--status {
+    max-width: var(--a-node-compact-status-column-max-width);
+  }
 }
 </style>

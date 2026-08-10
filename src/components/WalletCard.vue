@@ -1,41 +1,62 @@
 <template>
-  <v-card flat :class="className">
-    <v-list lines="two" :class="`${className}__list`">
-      <v-list-item :class="`${className}__tile`" @click="showShareURIDialog = true">
-        <v-list-item-title :class="`${className}__title`">
-          {{ $t('home.wallet_crypto', { crypto: cryptoName }) }}
+  <v-card flat color="transparent" :class="classes.root">
+    <v-list lines="two" bg-color="transparent" :class="classes.walletCardList">
+      <v-list-item :class="classes.walletCardTile" @click="showShareURIDialog = true">
+        <v-list-item-title :class="classes.walletCardTitle">
+          <template v-if="isADM">
+            <span v-if="walletTitlePrefix">{{ walletTitlePrefix }}</span>
+            <span :class="classes.walletCardBrandTitle">{{ cryptoName }}</span>
+            <span v-if="walletTitleSuffix">{{ walletTitleSuffix }}</span>
+          </template>
+          <template v-else>
+            {{ t('home.wallet_crypto', { crypto: cryptoName }) }}
+          </template>
         </v-list-item-title>
-        <v-list-item-subtitle :class="`${className}__subtitle`">
+        <v-list-item-subtitle :class="classes.walletCardSubtitle">
           {{ address }}
         </v-list-item-subtitle>
 
         <template #append>
-          <v-btn icon ripple variant="text" :class="`${className}__action`">
-            <v-icon :class="`${className}__icon`" icon="mdi-share-variant" size="small" />
+          <v-btn icon ripple variant="text" :class="classes.walletCardAction">
+            <v-icon :class="classes.walletCardIcon" :icon="mdiShareVariant" size="small" />
           </v-btn>
         </template>
       </v-list-item>
 
-      <v-list-item @click="$emit('click:balance', crypto)">
-        <v-list-item-title :class="`${className}__title`">
-          {{ $t('home.balance') }}
+      <v-list-item
+        :class="classes.walletCardTile"
+        :active="isBalanceActive"
+        @click="$emit('click:balance', crypto)"
+      >
+        <v-list-item-title :class="classes.walletCardTitle">
+          {{ t('home.balance') }}
         </v-list-item-title>
-        <v-list-item-subtitle :class="`${className}__subtitle`">
-          {{ currency(balance, crypto, true) }}
-          <span v-if="$store.state.rate.isLoaded" class="a-text-regular"
-            >~{{ rate }} {{ currentCurrency }}</span
-          >
+        <v-list-item-subtitle :class="classes.walletCardSubtitle">
+          <p v-if="!allCoinNodesDisabled">
+            {{ xs ? calculatedBalance : calculatedFullBalance }} {{ crypto }}
+            <span v-if="showFiatRate" :class="classes.walletCardRate">
+              ~{{ rate }} {{ currentCurrency }}
+            </span>
+            <v-tooltip
+              v-if="xs && calculatedFullBalance.toString().length > SIGNIFICANT_DIGITS"
+              activator="parent"
+              location="top left"
+            >
+              {{ calculatedFullBalance }}
+            </v-tooltip>
+          </p>
+          <p v-else>{{ t('home.no_active_nodes') }}</p>
         </v-list-item-subtitle>
 
         <template #append>
-          <v-btn icon ripple variant="text" :class="`${className}__action`">
-            <v-icon :class="`${className}__icon`" icon="mdi-chevron-right" size="small" />
+          <v-btn icon ripple variant="text" :class="classes.walletCardAction">
+            <v-icon :class="classes.walletCardIcon" :icon="mdiChevronRight" size="small" />
           </v-btn>
         </template>
       </v-list-item>
     </v-list>
 
-    <WalletCardListActions :class="`${className}__list`" :crypto="crypto" :is-a-d-m="isADM" />
+    <WalletCardListActions :class="classes.walletCardActions" :crypto="crypto" :is-a-d-m="isADM" />
 
     <ShareURIDialog
       v-model="showShareURIDialog"
@@ -46,118 +67,168 @@
   </v-card>
 </template>
 
-<script>
+<script lang="ts" setup>
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import ShareURIDialog from '@/components/ShareURIDialog.vue'
 import WalletCardListActions from '@/components/WalletCardListActions.vue'
-import { Cryptos } from '@/lib/constants'
-import currency from '@/filters/currencyAmountWithSymbol'
+import { Cryptos, CryptoSymbol } from '@/lib/constants'
+import { useDisplay } from 'vuetify'
+import smartNumber from '@/lib/smartNumber'
+import currencyAmount from '@/filters/currencyAmount'
+import { useStore } from 'vuex'
+import { mdiShareVariant, mdiChevronRight } from '@mdi/js'
 
-export default {
-  components: {
-    ShareURIDialog,
-    WalletCardListActions
-  },
-  props: {
-    address: {
-      type: String,
-      required: true
-    },
-    balance: {
-      type: Number,
-      required: true
-    },
-    rate: {
-      type: Number,
-      required: true
-    },
-    crypto: {
-      type: String,
-      default: 'ADM'
-    },
-    cryptoName: {
-      type: String,
-      default: 'ADAMANT'
-    },
-    currentCurrency: {
-      type: String,
-      default: 'USD'
-    }
-  },
-  emits: ['click:balance'],
-  data: () => ({ showShareURIDialog: false }),
-  computed: {
-    className() {
-      return 'wallet-card'
-    },
-    isADM() {
-      return this.crypto === Cryptos.ADM
-    }
-  },
-  methods: {
-    currency
-  }
+const SIGNIFICANT_DIGITS = 7
+const className = 'wallet-card'
+
+type Props = {
+  address: string
+  crypto: CryptoSymbol
+  cryptoName: string
+  currentCurrency: string
+  hideFiatRates?: boolean
+  allCoinNodesDisabled: boolean
+  rate: number
 }
+
+const classes = {
+  root: className,
+  walletCardAction: `${className}__action`,
+  walletCardActions: `${className}__actions`,
+  walletCardBrandTitle: `${className}__brand-title`,
+  walletCardIcon: `${className}__icon`,
+  walletCardList: `${className}__list`,
+  walletCardRate: `${className}__rate`,
+  walletCardSubtitle: `${className}__subtitle`,
+  walletCardTile: `${className}__tile`,
+  walletCardTitle: `${className}__title`
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  crypto: 'ADM',
+  cryptoName: 'ADAMANT',
+  currentCurrency: 'USD'
+})
+
+const { t } = useI18n()
+const store = useStore()
+const route = useRoute()
+const { xs } = useDisplay()
+const key = props.crypto.toLowerCase()
+const showShareURIDialog = ref(false)
+
+const balance = computed(() => {
+  return props.crypto === Cryptos.ADM
+    ? store.state.balance
+    : store.state[key]
+      ? store.state[key].balance
+      : 0
+})
+
+const calculatedBalance = computed(() => {
+  return smartNumber(calculatedFullBalance.value)
+})
+
+const calculatedFullBalance = computed(() => {
+  return balance.value ? currencyAmount(Number(balance.value), props.crypto, true) : 0
+})
+
+const isADM = computed(() => {
+  return props.crypto === Cryptos.ADM
+})
+
+const walletTitlePrefix = computed(() => {
+  return isADM.value ? t('home.wallet_crypto_adamant_prefix') : ''
+})
+
+const walletTitleSuffix = computed(() => {
+  return isADM.value ? t('home.wallet_crypto_adamant_suffix') : ''
+})
+
+const showFiatRate = computed(() => {
+  return !props.hideFiatRates && store.state.rate.isLoaded
+})
+
+const isBalanceActive = computed(() => {
+  return (
+    (route.name === 'Transactions' || route.name === 'Transaction') &&
+    route.params.crypto === props.crypto
+  )
+})
 </script>
 
 <style lang="scss" scoped>
-@import '@/assets/styles/themes/adamant/_mixins.scss';
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/components/_color-roles.scss' as colorRoles;
+@use '@/assets/styles/themes/adamant/_mixins.scss';
 
 .wallet-card {
+  --a-wallet-card-surface: var(--a-color-surface-transparent);
+  --a-wallet-card-action-color: var(--a-color-text-muted-light);
+  @include colorRoles.a-color-role-primary-surface-var('--a-wallet-card-title-color');
+  @include colorRoles.a-color-role-subtle-var('--a-wallet-card-subtitle-color');
+
+  background-color: var(--a-wallet-card-surface);
+
   &__title {
-    @include a-text-caption();
+    @include mixins.a-text-caption();
+    color: var(--a-wallet-card-title-color);
+  }
+  &__brand-title {
+    letter-spacing: var(--a-letter-spacing-caps-small);
   }
   &__subtitle {
-    @include a-text-regular-enlarged();
-    line-height: 24px;
+    @include mixins.a-text-regular-enlarged();
+    line-height: var(--a-wallet-card-subtitle-line-height);
+    color: var(--a-wallet-card-subtitle-color);
     word-break: break-word;
     display: block;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    span {
-      font-style: italic;
-      color: inherit;
-    }
+  }
+  &__rate {
+    @include mixins.a-text-regular();
+    font-style: var(--a-font-style-emphasis);
+    color: inherit;
   }
   &__list {
-    padding: 8px 0 0;
+    background: var(--a-wallet-card-surface);
+    padding-block-start: var(--a-wallet-card-list-padding-top);
+    padding-block-end: 0;
   }
-  &__tile {
-    // height: 60px // too small height
+
+  &__action {
+    color: var(--a-wallet-card-action-color);
   }
 }
 
-/** Themes **/
+::v-deep(.wallet-card__list .wallet-card__tile) {
+  padding-inline-start: var(--a-wallet-card-item-padding-inline-start);
+  padding-inline-end: var(--a-wallet-card-item-padding-inline-end);
+}
+
 .v-theme--light {
-  .wallet-card {
-    background-color: transparent;
-    &__list {
-      background: inherit;
-    }
-    &__title {
-      color: map-get($adm-colors, 'regular');
-    }
-    &__subtitle {
-      color: map-get($adm-colors, 'muted');
-    }
-    &__action {
-      color: map-get($adm-colors, 'muted');
+  :deep(.v-list-item--active) {
+    @include mixins.linear-gradient-light-gray();
+
+    > .v-list-item__overlay {
+      opacity: 0;
     }
   }
 }
+
 .v-theme--dark {
   .wallet-card {
-    background-color: transparent;
-    &__list {
-      background: inherit;
-    }
-    &__title {
-      color: map-get($shades, 'white');
-    }
-    &__subtitle {
-      color: rgba(map-get($shades, 'white'), 70%);
+    --a-wallet-card-action-color: var(--a-color-text-inverse);
+  }
+
+  :deep(.v-list-item--active) {
+    @include mixins.linear-gradient-dark-soft();
+
+    > .v-list-item__overlay {
+      opacity: 0;
     }
   }
 }

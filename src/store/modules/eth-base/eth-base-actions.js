@@ -1,5 +1,4 @@
 import BigNumber from 'bignumber.js'
-import { TransactionNotFound } from 'web3-errors'
 
 import * as utils from '../../../lib/eth-utils'
 import adm from '../../../lib/nodes/adm'
@@ -10,15 +9,18 @@ import {
   createPendingTransaction,
   PendingTxStore
 } from '../../../lib/pending-transactions'
-import * as tf from '../../../lib/transactionsFetching'
 import { signTransaction, TransactionFactory } from 'web3-eth-accounts'
 import api from '@/lib/nodes/eth'
+import EthContract from 'web3-eth-contract'
+import { isErc20 } from '@/lib/constants'
+import Erc20 from '../erc20/erc20.abi.json'
+import { logger } from '@/utils/devTools/logger'
 
 /** Interval between attempts to fetch the registered tx details */
 const CHUNK_SIZE = 25
 
 export default function createActions(config) {
-  const { onInit = () => {}, initTransaction, parseTransaction, createSpecificActions } = config
+  const { onInit = () => {}, initTransaction, createSpecificActions } = config
 
   return {
     ...createSpecificActions(api),
@@ -37,10 +39,6 @@ export default function createActions(config) {
         const pendingTransaction = PendingTxStore.get(context.state.crypto)
         if (pendingTransaction) {
           context.commit('transactions', [pendingTransaction])
-          context.dispatch('getTransaction', {
-            hash: pendingTransaction.hash,
-            force: true
-          })
         }
 
         onInit(context)
@@ -146,7 +144,9 @@ export default function createActions(config) {
         )
 
         if (sentTransactionHash !== signedTransaction.transactionHash) {
-          console.warn(
+          logger.log(
+            'eth-base-actions',
+            'warn',
             `Something wrong with sent ETH tx, computed hash and sent tx differs: ${signedTransaction.transactionHash} and ${sentTransactionHash}`
           )
         }
@@ -162,12 +162,6 @@ export default function createActions(config) {
             gasPrice: undefined
           }
         ])
-        context.dispatch('getTransaction', {
-          hash: sentTransactionHash,
-          isNew: true,
-          direction: 'from',
-          force: true
-        })
 
         return sentTransactionHash
       } catch (err) {
@@ -189,8 +183,7 @@ export default function createActions(config) {
       if (!transaction) return
 
       void api
-        .getClient()
-        .getBlock(payload.blockNumber)
+        .useClient((client) => client().getBlock(payload.blockNumber))
         .then((block) => {
           // Converting from BigInt into Number must be safe
           const timestamp = BigNumber(block.timestamp.toString()).multipliedBy(1000).toNumber()
@@ -204,192 +197,7 @@ export default function createActions(config) {
         })
     },
 
-    /**
-     * Enqueues a background request to retrieve the transaction details
-     * @param {object} context Vuex action context
-     * @param {{hash: string, force: boolean, timestamp: number, amount: number, direction: 'from' | 'to'}} payload hash and timestamp of the transaction to fetch
-     */
-    getTransaction(context, payload) {
-      const existing = context.state.transactions[payload.hash]
-      if (existing && !payload.force) return
-
-      if (!existing || payload.dropStatus) {
-        payload.updateOnly = false
-        context.commit('transactions', [
-          {
-            hash: payload.hash,
-            timestamp: (existing && existing.timestamp) || payload.timestamp || Date.now(),
-            amount: payload.amount,
-            status: 'PENDING',
-            direction: payload.direction
-          }
-        ])
-      }
-
-      const attempt = payload.attempt || 0
-      const retryCount = tf.getPendingTxRetryCount(
-        payload.timestamp || existing?.timestamp,
-        context.state.crypto
-      )
-      const retry = attempt < retryCount
-      const retryTimeout = tf.getPendingTxRetryTimeout(
-        payload.timestamp || existing?.timestamp,
-        context.state.crypto
-      )
-
-      void api
-        .getClient()
-        .getTransaction(payload.hash)
-        .then((tx) => {
-          const isFinalized = tx.blockNumber !== undefined
-
-          if (tx?.input && isFinalized) {
-            const transaction = parseTransaction(context, tx)
-            const status = existing ? existing.status : 'REGISTERED'
-            if (transaction) {
-              context.commit('transactions', [
-                {
-                  ...transaction,
-                  status
-                }
-              ])
-              // Fetch receipt details: status and actual gas consumption
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const { attempt, ...receiptPayload } = payload
-              context.dispatch('getTransactionReceipt', receiptPayload)
-              // Now we know that the transaction has been registered by the ETH network.
-              // Nothing else to do here, let's proceed to checking its status (see getTransactionReceipt)
-              return
-            }
-          }
-
-          if (!retry) {
-            // Give up, if transaction could not be found after so many attempts
-            context.commit('transactions', [{ hash: payload.hash, status: 'REJECTED' }])
-          } else if (!payload.updateOnly) {
-            // In case of an error or a pending transaction fetch its details once again later
-            // Increment attempt counter, if no transaction was found so far
-            const newPayload = tx
-              ? payload
-              : {
-                  ...payload,
-                  attempt: attempt + 1,
-                  force: true,
-                  updateOnly: false,
-                  dropStatus: false
-                }
-
-            setTimeout(() => context.dispatch('getTransaction', newPayload), retryTimeout)
-          }
-        })
-        .catch((err) => {
-          if (retry && err instanceof TransactionNotFound) {
-            const newPayload = {
-              ...payload,
-              attempt: attempt + 1,
-              force: true,
-              updateOnly: false,
-              dropStatus: false
-            }
-
-            setTimeout(() => context.dispatch('getTransaction', newPayload), retryTimeout)
-
-            return
-          }
-
-          throw err
-        })
-    },
-
-    /**
-     * Retrieves transaction receipt info: status and actual gas consumption.
-     * @param {any} context Vuex action context
-     * @param {{ hash: String, isNew: Boolean}} payload action payload
-     */
-    getTransactionReceipt(context, payload) {
-      const transaction = context.state.transactions[payload.hash]
-      if (!transaction) return
-
-      const gasPrice = transaction.gasPrice
-
-      const attempt = payload.attempt || 0
-      const retryCount = tf.getPendingTxRetryCount(
-        transaction.timestamp || Date.now(),
-        context.state.crypto
-      )
-      const retry = attempt < retryCount
-      const retryTimeout = tf.getPendingTxRetryTimeout(
-        transaction.timestamp || Date.now(),
-        context.state.crypto
-      )
-
-      void api
-        .getClient()
-        .getTransactionReceipt(payload.hash)
-        .then((tx) => {
-          let replay = true
-
-          if (tx) {
-            const update = {
-              hash: payload.hash,
-              fee: utils.calculateFee(tx.gasUsed, gasPrice)
-            }
-
-            if (Number(tx.status) === 0) {
-              // Status "0x0" means that the transaction has been rejected
-              update.status = 'REJECTED'
-            } else if (tx.blockNumber) {
-              // If blockNumber is not null, the transaction is confirmed
-              update.status = 'CONFIRMED'
-              update.blockNumber = Number(tx.blockNumber)
-            }
-
-            context.commit('transactions', [update])
-
-            if (tx.blockNumber) {
-              context.dispatch('getBlock', {
-                ...payload,
-                blockNumber: Number(tx.blockNumber)
-              })
-            }
-
-            // Re-fetch tx details if it's status is still unknown
-            replay = !update.status
-          }
-
-          if (replay && retry) {
-            // In case of an error or a pending transaction fetch its receipt once again later
-            // Increment attempt counter, if no transaction was found so far
-            const newPayload = { ...payload, attempt: 1 + (payload.attempt || 0) }
-            setTimeout(() => context.dispatch('getTransactionReceipt', newPayload), retryTimeout)
-          }
-        })
-        .catch((err) => {
-          if (retry && err instanceof TransactionNotFound) {
-            const newPayload = { ...payload, attempt: 1 + (payload.attempt || 0) }
-            setTimeout(() => context.dispatch('getTransactionReceipt', newPayload), retryTimeout)
-
-            return
-          }
-
-          throw err
-        })
-    },
-
-    /**
-     * Updates the transaction details
-     * @param {{ dispatch: function }} param0 Vuex context
-     * @param {{hash: string}} payload action payload
-     */
-    updateTransaction({ dispatch }, payload) {
-      return dispatch('getTransaction', {
-        ...payload,
-        force: payload.force,
-        updateOnly: payload.updateOnly
-      })
-    },
-
-    getNewTransactions(context) {
+    async getNewTransactions(context) {
       // Magic here helps to refresh Tx list when browser deletes it
       if (Object.keys(context.state.transactions).length < context.state.transactionsCount) {
         context.state.transactionsCount = 0
@@ -411,19 +219,16 @@ export default function createActions(config) {
 
       context.commit('areRecentLoading', true)
 
-      return ethIndexer
-        .getTransactions(options)
-        .then((transactions) => {
-          context.commit('areRecentLoading', false)
-          context.commit('transactions', { transactions, updateTimestamps: true })
-        })
-        .catch((err) => {
-          context.commit('areRecentLoading', false)
-          return Promise.reject(err)
-        })
+      const transactions = await ethIndexer.getTransactions(options)
+
+      if (transactions) {
+        context.commit('transactions', { transactions, updateTimestamps: true })
+      }
+
+      context.commit('areRecentLoading', false)
     },
 
-    getOldTransactions(context) {
+    async getOldTransactions(context) {
       // If we already have the most old transaction for this address, no need to request anything
       if (context.state.bottomReached) return Promise.resolve()
 
@@ -441,20 +246,53 @@ export default function createActions(config) {
 
       context.commit('areOlderLoading', true)
 
-      return ethIndexer
-        .getTransactions(options)
-        .then((transactions) => {
-          context.commit('areOlderLoading', false)
-          context.commit('transactions', { transactions, updateTimestamps: true })
+      const transactions = await ethIndexer.getTransactions(options)
 
-          if (transactions.length === 0) {
-            context.commit('bottom', true)
+      if (transactions) {
+        context.commit('transactions', { transactions, updateTimestamps: true })
+
+        if (transactions.length === 0) {
+          context.commit('bottom', true)
+        }
+      }
+
+      context.commit('areOlderLoading', false)
+    },
+
+    /**
+     * Estimate gas limit for ETH or ERC20 transaction
+     * @param {Object} context - Vuex context
+     * @param {Object} params - Parameters
+     * @param {number} params.amount - Transaction amount
+     * @param {string} params.address - Recipient address
+     * @returns {Promise<number|null>} Estimated gas limit or null if estimation failed
+     */
+    estimateGasLimit: {
+      async handler({ state }, { amount, address }) {
+        try {
+          const isToken = isErc20(state.crypto)
+          const toAddress = isToken ? state.contractAddress : address
+          const value = isToken ? '0x0' : utils.toWei(amount)
+          const data = isToken
+            ? new EthContract(Erc20, state.contractAddress).methods
+                .transfer(address, utils.toWhole(amount, state.decimals))
+                .encodeABI()
+            : undefined
+
+          const transaction = {
+            from: state.address,
+            to: toAddress,
+            value,
+            ...(data && { data })
           }
-        })
-        .catch((err) => {
-          context.commit('areOlderLoading', false)
-          return Promise.reject(err)
-        })
+
+          const gasLimit = await api.useClient((client) => client().estimateGas(transaction))
+          return Number(gasLimit)
+        } catch (error) {
+          logger.log('eth-base-actions', 'warn', `${state.crypto} EstimateGas failed:`, error)
+          return null
+        }
+      }
     }
   }
 }

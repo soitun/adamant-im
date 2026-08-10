@@ -7,8 +7,7 @@ export type TNodeLabel =
   | 'doge-node'
   | 'doge-indexer'
   | 'dash-node'
-  | 'kly-node'
-  | 'kly-indexer'
+  | 'ipfs-node'
   | 'rates-info'
 
 type KebabToCamelCase<S extends string> = S extends `${infer T}-${infer U}`
@@ -36,7 +35,9 @@ export const NODE_LABELS: NodeLabels = {
   DogeNode: 'doge-node',
   DogeIndexer: 'doge-indexer',
   DashNode: 'dash-node',
-  KlyNode: 'kly-node',
-  KlyIndexer: 'kly-indexer',
+  IpfsNode: 'ipfs-node',
   RatesInfo: 'rates-info'
 }
+
+// Default timeDelta (s) in case there's no connection to get it from a node
+export const DEFAULT_TIME_DELTA = 0.5

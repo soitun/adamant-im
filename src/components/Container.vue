@@ -1,5 +1,5 @@
 <template>
-  <div :class="classes">
+  <div :class="classes" v-bind="$attrs">
     <slot />
   </div>
 </template>
@@ -12,13 +12,18 @@ export default defineComponent({
     padding: {
       type: Boolean,
       default: false
+    },
+    disableMaxWidth: {
+      type: Boolean,
+      default: false
     }
   },
   setup(props) {
     const classes = computed(() => {
       return {
         'a-container': true,
-        'a-container--padding': props.padding
+        'a-container--padding': props.padding,
+        'a-container--no-mw': props.disableMaxWidth
       }
     })
 
@@ -30,21 +35,17 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-@import 'vuetify/settings';
-
 .a-container {
   width: 100%;
-  max-width: 800px;
+  max-width: var(--a-layout-content-max-width);
   position: relative;
 
-  &--padding {
-    padding: 0 24px;
+  &--no-mw {
+    max-width: unset;
   }
 
-  @media #{map-get($display-breakpoints, 'sm-and-down')} {
-    &--padding {
-      padding: 0 16px;
-    }
+  &--padding {
+    padding-inline: var(--a-space-6);
   }
 }
 </style>

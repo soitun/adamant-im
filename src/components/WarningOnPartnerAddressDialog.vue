@@ -1,21 +1,38 @@
 <template>
-  <v-dialog v-model="show" width="500" :class="className" @keydown.enter="onEnter">
+  <v-dialog
+    v-model="show"
+    width="var(--a-secondary-dialog-width)"
+    :class="className"
+    @keydown.enter="onEnter"
+  >
     <v-card>
-      <v-card-title class="a-text-header">
+      <v-card-title :class="`${className}__card-title`">
         {{ header() }}
       </v-card-title>
 
       <v-divider class="a-divider" />
 
-      <!-- eslint-disable vue/no-v-html -- Safe with DOMPurify.sanitize() content -->
-      <v-card-text>
-        <div :class="`${className}__disclaimer a-text-regular-enlarged`" v-html="content()" />
-      </v-card-text>
-      <!-- eslint-enable vue/no-v-html -->
+      <v-card-text :class="`${className}__card-text`">
+        <div :class="`${className}__disclaimer`">
+          {{ about() }}
+        </div>
 
-      <v-col cols="12" class="text-center">
+        <div :class="`${className}__disclaimer ${className}__highlight`">
+          {{ details() }}
+        </div>
+
+        <div :class="`${className}__disclaimer`">
+          {{ reasons() }}
+        </div>
+
+        <div :class="`${className}__disclaimer`">
+          {{ action() }}
+        </div>
+      </v-card-text>
+
+      <v-col cols="12" :class="`${className}__btn-block`">
         <v-btn :class="[`${className}__btn-hide`, 'a-btn-primary']" @click="hide()">
-          <v-icon :class="`${className}__btn-icon`" icon="mdi-alert" />
+          <v-icon :class="`${className}__btn-icon`" :icon="mdiAlert" />
           <div :class="`${className}__btn-text`">
             {{ $t('transfer.warning_on_partner_address.hide_button') }}
           </div>
@@ -26,7 +43,7 @@
 </template>
 
 <script>
-import DOMPurify from 'dompurify'
+import { mdiAlert } from '@mdi/js'
 
 export default {
   props: {
@@ -40,6 +57,11 @@ export default {
     }
   },
   emits: ['update:modelValue'],
+  setup() {
+    return {
+      mdiAlert
+    }
+  },
   computed: {
     className: () => 'warning-on-partner-address-dialog',
     show: {
@@ -52,28 +74,25 @@ export default {
     }
   },
   methods: {
-    header: function () {
-      return (
-        this.$t('transfer.warning_on_partner_address.warning') +
-        ': ' +
-        this.$t('transfer.warning_on_partner_address.headline')
-      )
+    header() {
+      return this.$t('transfer.warning_on_partner_address.headline')
     },
-    content: function () {
-      let contents = '<p>' + this.$t('transfer.warning_on_partner_address.about') + '</p>'
-      contents +=
-        '<p class="a-text-attention">' +
-        this.$t('transfer.warning_on_partner_address.specifics_many_addresses', {
-          crypto: this.info.coin,
-          partner_account: this.info.ADMaddress,
-          partner_name: this.info.ADMname,
-          manyAddresses: this.info.coinAddresses
-        })
-      contents += '</p>'
-      contents += '<p>' + this.$t('transfer.warning_on_partner_address.reasons')
-      contents += ' ' + this.$t('transfer.warning_on_partner_address.what_to_do') + '</p>'
-      contents = DOMPurify.sanitize(contents)
-      return contents
+    about() {
+      return this.$t('transfer.warning_on_partner_address.about')
+    },
+    details() {
+      return this.$t('transfer.warning_on_partner_address.specifics_many_addresses', {
+        crypto: this.info.coin,
+        partner_account: this.info.ADMaddress,
+        partner_name: this.info.ADMname,
+        manyAddresses: this.info.coinAddresses
+      })
+    },
+    reasons() {
+      return this.$t('transfer.warning_on_partner_address.reasons')
+    },
+    action() {
+      return this.$t('transfer.warning_on_partner_address.what_to_do')
     },
     hide() {
       this.show = false
@@ -86,17 +105,34 @@ export default {
   }
 }
 </script>
+
 <style lang="scss" scoped>
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/components/_secondary-dialog.scss' as secondaryDialog;
+@use 'vuetify/_settings.scss';
+
 .warning-on-partner-address-dialog {
+  @include secondaryDialog.a-secondary-dialog-warning-frame();
+
+  &__card-title {
+    @include secondaryDialog.a-secondary-dialog-title();
+  }
+
   &__disclaimer {
-    margin-top: 10px;
+    @include secondaryDialog.a-secondary-dialog-body-copy();
   }
+
+  &__highlight {
+    background-color: var(--a-color-surface-warning-soft);
+  }
+
+  &__btn-block {
+    @include secondaryDialog.a-secondary-dialog-action-block();
+  }
+
   &__btn-hide {
-    margin-top: 15px;
-    margin-bottom: 30px;
-  }
-  &__btn-icon {
-    margin-right: 8px;
+    @include secondaryDialog.a-secondary-dialog-primary-action-button();
   }
 }
 </style>

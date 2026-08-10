@@ -1,23 +1,24 @@
 import * as ethUtils from '../../../lib/eth-utils'
-import { FetchStatus, DEFAULT_ERC20_TRANSFER_GAS_LIMIT } from '@/lib/constants'
+import { FetchStatus, CryptosInfo } from '@/lib/constants'
 import EthContract from 'web3-eth-contract'
 import Erc20 from './erc20.abi.json'
 import createActions from '../eth-base/eth-base-actions'
-import { AbiDecoder } from '@/lib/abi/abi-decoder'
 import shouldUpdate from '../../utils/coinUpdatesGuard'
+import { validateStoredCryptoAddresses } from '@/lib/store-crypto-address.js'
+import { logger } from '@/utils/devTools/logger'
 
 /** Timestamp of the most recent status update */
 let lastStatusUpdate = 0
 /** Status update interval is 25 sec: ERC20 balance */
 const STATUS_INTERVAL = 25000
-
-// Setup decoder
-const abiDecoder = new AbiDecoder(Erc20)
+/** Interval for updating balances */
+let interval
 
 const initTransaction = async (api, context, ethAddress, amount, nonce, increaseFee) => {
   const contract = new EthContract(Erc20, context.state.contractAddress)
 
-  const gasPrice = await api.getClient().getGasPrice()
+  const gasPrice = BigInt(context.getters.finalGasPrice(increaseFee))
+  const amountWei = ethUtils.toWhole(amount, context.state.decimals)
 
   const transaction = {
     from: context.state.address,
@@ -25,50 +26,32 @@ const initTransaction = async (api, context, ethAddress, amount, nonce, increase
     value: '0x0',
     gasPrice,
     nonce,
-    data: contract.methods
-      .transfer(ethAddress, ethUtils.toWhole(amount, context.state.decimals))
-      .encodeABI()
+    data: contract.methods.transfer(ethAddress, amountWei).encodeABI()
   }
 
-  const gasLimit = await api
-    .getClient()
-    .estimateGas(transaction)
-    .catch(() => BigInt(DEFAULT_ERC20_TRANSFER_GAS_LIMIT))
-  transaction.gasLimit = increaseFee ? ethUtils.increaseFee(gasLimit) : gasLimit
+  const tokenInfo = CryptosInfo[context.state.crypto]
+  const ethInfo = CryptosInfo['ETH']
+
+  const reliabilityGasLimitPercent =
+    tokenInfo.reliabilityGasLimitPercent ?? ethInfo.reliabilityGasLimitPercent
+
+  try {
+    let estimatedGasLimit = await api.useClient((client) => client().estimateGas(transaction))
+
+    const reliableGasLimit = ethUtils.calculateReliableValue(
+      estimatedGasLimit,
+      reliabilityGasLimitPercent
+    )
+    transaction.gasLimit = BigInt(reliableGasLimit.integerValue().toString())
+  } catch {
+    transaction.gasLimit = BigInt(tokenInfo.defaultGasLimit ?? ethInfo.defaultGasLimit)
+  }
 
   return transaction
 }
 
-const parseTransaction = (context, tx) => {
-  let recipientId = null
-  let amount = null
-
-  const decoded = abiDecoder.decodeMethod(tx.input)
-  if (decoded && decoded.name === 'transfer') {
-    decoded.params.forEach((x) => {
-      if (x.name === '_to') recipientId = x.value
-      if (x.name === '_value') amount = ethUtils.toFraction(x.value, context.state.decimals)
-    })
-  }
-
-  if (recipientId) {
-    return {
-      // Why comparing to eth.actions, there is no fee and status?
-      hash: tx.hash,
-      senderId: tx.from,
-      blockNumber: Number(tx.blockNumber),
-      amount,
-      recipientId,
-      gasPrice: Number(tx.gasPrice || tx.effectiveGasPrice)
-    }
-  }
-
-  return null
-}
-
 const createSpecificActions = (api) => ({
   updateBalance: {
-    root: true,
     async handler({ commit, rootGetters, state }, payload = {}) {
       const coin = state.crypto
 
@@ -89,10 +72,43 @@ const createSpecificActions = (api) => ({
 
         commit('balance', balance)
         commit('setBalanceStatus', FetchStatus.Success)
+        commit('setBalanceActualUntil', Date.now() + CryptosInfo.ETH.balanceValidInterval)
       } catch (err) {
         commit('setBalanceStatus', FetchStatus.Error)
-        console.log(err)
+        logger.log('erc20-actions', 'warn', err)
       }
+    }
+  },
+
+  /** Wrapper to manually request balance update if needed */
+  requestBalanceUpdate: {
+    root: true,
+    handler({ dispatch }) {
+      dispatch('updateBalance')
+    }
+  },
+
+  initBalanceUpdate: {
+    root: true,
+    handler({ dispatch }) {
+      function repeat() {
+        validateStoredCryptoAddresses()
+        dispatch('updateBalance')
+          .catch((err) => logger.log('erc20-actions', 'warn', err))
+          .then(() => {
+            interval = setTimeout(() => {
+              repeat()
+            }, CryptosInfo.ETH.balanceCheckInterval)
+          })
+      }
+      repeat()
+    }
+  },
+
+  stopInterval: {
+    root: true,
+    handler() {
+      clearTimeout(interval)
     }
   },
 
@@ -106,38 +122,41 @@ const createSpecificActions = (api) => ({
       return
     }
 
-    const contract = new EthContract(Erc20, context.state.contractAddress)
-    contract.setProvider(api.getClient().provider)
+    try {
+      const contract = new EthContract(Erc20, context.state.contractAddress)
+      contract.setProvider(api.getClient().provider)
 
-    contract.methods
-      .balanceOf(context.state.address)
-      .call()
-      .then(
-        (balance) => {
-          context.commit(
-            'balance',
-            Number(ethUtils.toFraction(balance.toString(10), context.state.decimals))
-          )
-          context.commit('setBalanceStatus', FetchStatus.Success)
-        },
-        () => {
-          context.commit('setBalanceStatus', FetchStatus.Error)
-        }
-      )
-      .then(() => {
-        const delay = Math.max(0, STATUS_INTERVAL - Date.now() + lastStatusUpdate)
-        setTimeout(() => {
-          if (context.state.address) {
-            lastStatusUpdate = Date.now()
-            context.dispatch('updateStatus')
+      contract.methods
+        .balanceOf(context.state.address)
+        .call()
+        .then(
+          (balance) => {
+            context.commit(
+              'balance',
+              Number(ethUtils.toFraction(balance.toString(10), context.state.decimals))
+            )
+            context.commit('setBalanceStatus', FetchStatus.Success)
+          },
+          () => {
+            context.commit('setBalanceStatus', FetchStatus.Error)
           }
-        }, delay)
-      })
+        )
+        .then(() => {
+          const delay = Math.max(0, STATUS_INTERVAL - Date.now() + lastStatusUpdate)
+          setTimeout(() => {
+            if (context.state.address) {
+              lastStatusUpdate = Date.now()
+              context.dispatch('updateStatus')
+            }
+          }, delay)
+        })
+    } catch (err) {
+      logger.log('erc20-actions', 'warn', err)
+    }
   }
 })
 
 export default createActions({
   initTransaction,
-  parseTransaction,
   createSpecificActions
 })

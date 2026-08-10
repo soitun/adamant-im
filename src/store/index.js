@@ -8,8 +8,13 @@ import {
   sendSpecialMessage,
   getCurrentAccount
 } from '@/lib/adamant-api'
-import { Fees, FetchStatus } from '@/lib/constants'
+import { CryptosInfo, Fees, FetchStatus } from '@/lib/constants'
 import { encryptPassword } from '@/lib/idb/crypto'
+import {
+  clearPasswordKdfDescriptor,
+  createPasswordKdfDescriptor,
+  savePasswordKdfDescriptor
+} from '@/lib/idb/passwordKdf'
 import { flushCryptoAddresses, validateStoredCryptoAddresses } from '@/lib/store-crypto-address'
 import { registerCryptoModules } from './utils/registerCryptoModules'
 import { registerVuexPlugins } from './utils/registerVuexPlugins'
@@ -20,12 +25,12 @@ import navigatorOnline from './plugins/navigatorOnline'
 import socketsPlugin from './plugins/socketsPlugin'
 import partnersModule from './modules/partners'
 import admModule from './modules/adm'
+import attachmentModule from './modules/attachment'
 import botCommandsModule from './modules/bot-commands'
 import bitcoinModule from './modules/btc'
 import dashModule from './modules/dash'
 import delegatesModule from './modules/delegates'
 import dogeModule from './modules/doge'
-import klyModule from './modules/kly'
 import nodesModule from './modules/nodes'
 import walletsModule from './modules/wallets'
 import nodesPlugin from './modules/nodes/nodes-plugin'
@@ -42,10 +47,17 @@ import cache from '@/store/cache'
 import rate from './modules/rate'
 import { cryptoTransferAsset, replyWithCryptoTransferAsset } from '@/lib/adamant-api/asset'
 import { PendingTxStore } from '@/lib/pending-transactions'
+import servicesModule from './modules/services'
+import servicesPlugin from './modules/services/services-plugin'
+import { logger } from '@/utils/devTools/logger'
 
 export let interval
 
-const UPDATE_BALANCE_INTERVAL = 10000
+const {
+  balanceCheckInterval: UPDATE_BALANCE_INTERVAL,
+  balanceCheckIntervalNewAccount: UPDATE_BALANCE_INTERVAL_FOR_NEW_ACCOUNT,
+  balanceValidInterval: BALANCE_INVALID_TIMEOUT
+} = CryptosInfo.ADM
 
 /**
  * @type { import("vuex").StoreOptions } store
@@ -55,13 +67,17 @@ const store = {
     IDBReady: false, // set `true` when state has been saved in IDB
     address: '',
     balance: 0,
+    unconfirmedBalance: 0,
     balanceStatus: FetchStatus.Loading,
     passphrase: '',
     password: '',
-    publicKeys: {}
+    publicKeys: {},
+    isOnline: true,
+    balanceActualUntil: 0
   }),
   getters: {
     isLogged: (state) => state.passphrase.length > 0,
+    isOnline: (state) => state.isOnline,
     getPassPhrase: (state) => state.passphrase, // compatibility getter for ERC20 modules
     publicKey: (state) => (adamantAddress) => state.publicKeys[adamantAddress],
     isAccountNew: (state) =>
@@ -75,6 +91,7 @@ const store = {
       */
         return (
           state.balance === 0 &&
+          state.unconfirmedBalance === 0 &&
           state.chat.lastMessageHeight === 0 &&
           Object.keys(state.adm.transactions).length === 0
         )
@@ -86,6 +103,9 @@ const store = {
     },
     setBalance(state, balance) {
       state.balance = balance
+    },
+    setUnconfirmedBalance(state, balance) {
+      state.unconfirmedBalance = balance
     },
     setBalanceStatus(state, status) {
       state.balanceStatus = status
@@ -113,6 +133,12 @@ const store = {
     },
     setPublicKey(state, { adamantAddress, publicKey }) {
       state.publicKeys[adamantAddress] = publicKey
+    },
+    setIsOnline(state, value) {
+      state.isOnline = value
+    },
+    setBalanceActualUntil(state, value) {
+      state.balanceActualUntil = value
     }
   },
   actions: {
@@ -123,6 +149,7 @@ const store = {
       return loginOrRegister(passphrase).then((account) => {
         commit('setAddress', account.address)
         commit('setBalance', account.balance)
+        commit('setUnconfirmedBalance', account.unconfirmedBalance)
         commit('setPassphrase', passphrase)
 
         // retrieve wallet data
@@ -137,8 +164,10 @@ const store = {
         dispatch('afterLogin', account.passphrase)
       })
     },
-    logout({ dispatch }) {
+    logout({ dispatch, commit }) {
       dispatch('reset')
+      commit('options/resetAccountViewState', null, { root: true })
+      commit('options/resetSettingsViewState', null, { root: true })
       dispatch('wallets/initWalletsSymbols')
       dispatch('draftMessage/resetState', null, { root: true })
       PendingTxStore.clear()
@@ -177,7 +206,10 @@ const store = {
       commit('reset', null, { root: true })
     },
     setPassword({ commit }, password) {
-      return encryptPassword(password).then((encryptedPassword) => {
+      const descriptor = createPasswordKdfDescriptor()
+
+      return encryptPassword(password, descriptor).then((encryptedPassword) => {
+        savePasswordKdfDescriptor(descriptor)
         commit('setPassword', encryptedPassword)
 
         return encryptedPassword
@@ -187,6 +219,12 @@ const store = {
       commit('resetPassword')
       commit('setIDBReady', false)
       commit('options/updateOption', { key: 'stayLoggedIn', value: false })
+
+      try {
+        clearPasswordKdfDescriptor()
+      } catch (error) {
+        logger.log('store', 'warn', 'Failed to clear password KDF data', error)
+      }
     },
     updateBalance({ commit }, payload = {}) {
       if (payload.requestedByUser) {
@@ -196,10 +234,12 @@ const store = {
       return getCurrentAccount()
         .then((account) => {
           commit('setBalance', account.balance)
+          commit('setUnconfirmedBalance', account.unconfirmedBalance)
           commit('setBalanceStatus', FetchStatus.Success)
           if (account.balance > Fees.KVS) {
             flushCryptoAddresses()
           }
+          commit('setBalanceActualUntil', Date.now() + BALANCE_INVALID_TIMEOUT)
         })
         .catch((err) => {
           commit('setBalanceStatus', FetchStatus.Error)
@@ -209,13 +249,22 @@ const store = {
 
     startInterval: {
       root: true,
-      handler({ dispatch }) {
+      handler({ dispatch, getters }) {
         function repeat() {
           validateStoredCryptoAddresses()
           dispatch('updateBalance')
-            .catch((err) => console.error(err))
-            .then(() => (interval = setTimeout(repeat, UPDATE_BALANCE_INTERVAL)))
+            .catch((err) => logger.log('store', 'warn', err))
+            .then(
+              () =>
+                (interval = setTimeout(
+                  repeat,
+                  getters.isAccountNew()
+                    ? UPDATE_BALANCE_INTERVAL_FOR_NEW_ACCOUNT
+                    : UPDATE_BALANCE_INTERVAL
+                ))
+            )
         }
+        dispatch('initBalanceUpdate').catch((err) => logger.log('store', 'warn', err))
         repeat()
       }
     },
@@ -229,8 +278,8 @@ const store = {
   },
   modules: {
     adm: admModule, // ADM transfers
+    attachment: attachmentModule, // Files and photos attachments
     doge: dogeModule,
-    kly: klyModule,
     dash: dashModule,
     btc: bitcoinModule,
     partners: partnersModule, // Partners: display names, crypto addresses and so on
@@ -245,12 +294,15 @@ const store = {
     identicon,
     notification,
     rate,
+    services: servicesModule,
     wallets: walletsModule // Wallets order and visibility
   }
 }
 
 const storeInstance = createStore(store)
-window.store = storeInstance
+
+// Need to init persistence plugin before other, because they use info from wallets
+registerVuexPlugins(storeInstance, [walletsPersistencePlugin])
 
 registerCryptoModules(storeInstance)
 registerVuexPlugins(storeInstance, [
@@ -261,7 +313,7 @@ registerVuexPlugins(storeInstance, [
   navigatorOnline,
   socketsPlugin,
   botCommandsPlugin,
-  walletsPersistencePlugin
+  servicesPlugin
 ])
 
 export { store } // for tests

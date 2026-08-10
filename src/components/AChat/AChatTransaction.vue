@@ -4,7 +4,11 @@
     :class="{
       'a-chat__message-container--right': isStringEqualCI(transaction.senderId, userId),
       'a-chat__message-container--transition': elementLeftOffset === 0,
-      'a-chat__message-container--disable-max-width': disableMaxWidth
+      'a-chat__message-container--disable-max-width': disableMaxWidth,
+      'a-chat__message-container--grouped':
+        !transaction.showBubble && isStringEqualCI(transaction.senderId, userId),
+      'a-chat__message-container--grouped-left':
+        !transaction.showBubble && !isStringEqualCI(transaction.senderId, userId)
     }"
     v-touch="{
       move: onMove,
@@ -29,14 +33,20 @@
             {{ time }}
           </div>
           <div class="a-chat__status">
-            <v-icon
-              size="13"
-              :icon="statusIcon"
-              :title="statusTitle"
-              :color="statusColor"
-              :style="statusUpdatable ? 'cursor: pointer;' : 'cursor: default;'"
-              @click="updateStatus"
-            />
+            <TransactionProvider :transaction="transaction">
+              <template #default="{ status, refetch }">
+                <v-icon
+                  :class="{
+                    'a-chat__status-icon--clickable': checkStatusUpdatable(status)
+                  }"
+                  :size="CHAT_STATUS_ICON_SIZE"
+                  :icon="tsIcon(status)"
+                  :title="t(`chats.transaction_statuses.${status}`)"
+                  :color="tsColor(status)"
+                  @click="checkStatusUpdatable(status) ? refetch() : undefined"
+                />
+              </template>
+            </TransactionProvider>
           </div>
         </div>
 
@@ -48,11 +58,11 @@
         </div>
 
         <div>
-          <div class="a-chat__direction a-text-regular-bold">
+          <div class="a-chat__direction">
             {{
               isStringEqualCI(transaction.senderId, userId)
-                ? $t('chats.sent_label')
-                : $t('chats.received_label')
+                ? t('chats.sent_label')
+                : t('chats.received_label')
             }}
           </div>
           <div
@@ -60,10 +70,12 @@
             :class="isCryptoSupported ? 'a-chat__amount--clickable' : ''"
             @click="onClickAmount"
           >
-            <v-row align="center" no-gutters>
+            <v-row align="center" gap="0">
               <slot name="crypto" />
-              <div class="a-chat__rates-column d-flex ml-4">
-                <span class="mb-1">{{ currencyFormatter(transaction.amount, crypto) }}</span>
+              <div class="a-chat__rates-column">
+                <span class="a-chat__rates-amount">{{
+                  currencyFormatter(transaction.amount, crypto)
+                }}</span>
                 <span class="a-chat__rates">{{ historyRate }}</span>
               </div>
             </v-row>
@@ -71,7 +83,7 @@
         </div>
 
         <div class="a-chat__message-card-body">
-          <div class="a-chat__message-text mb-1 a-text-regular-enlarged">
+          <div class="a-chat__message-text a-chat__transaction-note">
             {{ transaction.message }}
           </div>
         </div>
@@ -83,23 +95,26 @@
 </template>
 
 <script lang="ts">
-import { useTransactionTime } from '@/components/AChat/hooks/useTransactionTime.ts'
+import { computed, watch, onMounted, defineComponent, PropType } from 'vue'
+import { useStore } from 'vuex'
+import { useI18n } from 'vue-i18n'
+import { useTransactionTime } from '@/components/AChat/hooks/useTransactionTime'
 import { NormalizedChatMessageTransaction } from '@/lib/chat/helpers'
 import { CryptoSymbol } from '@/lib/constants/cryptos'
-import { computed, watch, onMounted, defineComponent, PropType } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { useStore } from 'vuex'
 
-import { tsIcon, tsUpdatable, tsColor, Cryptos } from '@/lib/constants'
+import { tsIcon, tsUpdatable, tsColor, Cryptos, TransactionStatusType } from '@/lib/constants'
 import { isStringEqualCI } from '@/lib/textHelpers'
 import currencyAmount from '@/filters/currencyAmount'
 import { timestampInSec } from '@/filters/helpers'
 import currencyFormatter from '@/filters/currencyAmountWithSymbol'
 import { useSwipeLeft } from '@/hooks/useSwipeLeft'
 import QuotedMessage from './QuotedMessage.vue'
+import { TransactionProvider } from '@/providers/TransactionProvider'
+import { CHAT_STATUS_ICON_SIZE } from './helpers/uiMetrics'
 
 export default defineComponent({
   components: {
+    TransactionProvider,
     QuotedMessage
   },
   props: {
@@ -109,17 +124,6 @@ export default defineComponent({
     },
     dataId: {
       type: String
-    },
-    status: {
-      type: Object,
-      required: true
-    },
-    crypto: {
-      type: String,
-      default: 'ADM'
-    },
-    txTimestamp: {
-      required: true
     },
     /**
      * Highlight the message by applying a background flash effect
@@ -138,39 +142,28 @@ export default defineComponent({
       type: Boolean
     }
   },
-  emits: [
-    'mount',
-    'click:transaction',
-    'click:transactionStatus',
-    'click:quotedMessage',
-    'swipe:left',
-    'longpress'
-  ],
+  emits: ['click:transaction', 'click:quotedMessage', 'swipe:left', 'longpress'],
   setup(props, { emit }) {
     const { t } = useI18n()
     const store = useStore()
 
     const userId = computed(() => store.state.address)
+    const crypto = computed(() => props.transaction.type as CryptoSymbol | 'UNKNOWN_CRYPTO')
 
     const time = useTransactionTime(props.transaction)
     const isCryptoSupported = computed(() => props.transaction.type in Cryptos)
+    const checkStatusUpdatable = (status: TransactionStatusType) => {
+      return tsUpdatable(status, crypto.value as CryptoSymbol)
+    }
 
-    const statusIcon = computed(() => tsIcon(props.status.virtualStatus))
-    const statusTitle = computed(() =>
-      t(`chats.transaction_statuses.${props.status.virtualStatus}`)
-    )
-    const statusUpdatable = computed(() =>
-      tsUpdatable(props.status.virtualStatus, props.crypto as CryptoSymbol)
-    )
-    const statusColor = computed(() => tsColor(props.status.virtualStatus))
     const historyRate = computed(() => {
-      const amount = currencyAmount(props.transaction.amount, props.crypto)
+      const amount = currencyAmount(props.transaction.amount, crypto.value)
       return (
         '~' +
         store.getters['rate/historyRate'](
-          timestampInSec(props.crypto, props.txTimestamp),
+          timestampInSec(crypto.value, props.transaction.timestamp),
           amount,
-          props.crypto
+          crypto.value
         )
       )
     })
@@ -181,15 +174,9 @@ export default defineComponent({
       }
     }
 
-    const updateStatus = () => {
-      if (statusUpdatable.value) {
-        emit('click:transactionStatus', props.transaction.id)
-      }
-    }
-
     const getHistoryRates = () => {
       store.dispatch('rate/getHistoryRates', {
-        timestamp: timestampInSec(props.crypto, props.txTimestamp)
+        timestamp: timestampInSec(crypto.value, props.transaction.timestamp)
       })
     }
 
@@ -198,14 +185,13 @@ export default defineComponent({
     }
 
     watch(
-      () => props.txTimestamp,
+      () => props.transaction.timestamp,
       () => {
         getHistoryRates()
       }
     )
 
     onMounted(() => {
-      emit('mount')
       getHistoryRates()
     })
 
@@ -214,21 +200,23 @@ export default defineComponent({
     })
 
     return {
+      t,
+      crypto,
       userId,
 
       time,
       isCryptoSupported,
+      checkStatusUpdatable,
 
       isStringEqualCI,
       currencyFormatter,
-      statusIcon,
-      statusTitle,
-      statusUpdatable,
-      statusColor,
+      tsIcon,
+      tsColor,
+      tsUpdatable,
       historyRate,
       onClickAmount,
-      updateStatus,
       onLongPress,
+      CHAT_STATUS_ICON_SIZE,
 
       onMove,
       onSwipeEnd,
@@ -237,3 +225,20 @@ export default defineComponent({
   }
 })
 </script>
+
+<style lang="scss" scoped>
+@use '@/assets/styles/components/_chat-message-content.scss' as chatMessageContent;
+@use '@/assets/styles/themes/adamant/_mixins.scss' as mixins;
+
+.a-chat__direction {
+  @include mixins.a-text-regular-bold();
+}
+
+.a-chat__transaction-note {
+  @include chatMessageContent.a-chat-message-body-copy();
+}
+
+.a-chat__status-icon--clickable {
+  cursor: pointer;
+}
+</style>

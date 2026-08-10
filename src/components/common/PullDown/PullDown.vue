@@ -84,14 +84,15 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use 'vuetify/settings';
 
 .pull-down {
   position: relative;
 
   &--transition {
-    transition: all 0.6s;
+    transition: all var(--a-pull-down-transition-duration);
   }
 
   &__loader-container {
@@ -99,7 +100,7 @@ export default defineComponent({
     align-items: center;
     justify-content: space-around;
     flex-direction: column;
-    padding: 16px;
+    padding: var(--a-pull-down-loader-padding);
     position: absolute;
     bottom: 100%;
     left: 0;
@@ -107,7 +108,7 @@ export default defineComponent({
   }
 
   &__progress-circular {
-    transition: color 0.5s ease;
+    transition: color var(--a-pull-down-progress-transition-duration) ease;
 
     :deep(.v-progress-circular__overlay) {
       transition: unset;
@@ -115,29 +116,29 @@ export default defineComponent({
   }
 
   &__action-text {
-    transition: color 0.2s ease;
+    transition: color var(--a-pull-down-text-transition-duration) ease;
 
-    font-size: 14px;
-    font-weight: 500;
-    margin-top: 8px;
+    font-size: var(--a-pull-down-text-font-size);
+    font-weight: var(--a-pull-down-text-font-weight);
+    margin-top: var(--a-pull-down-text-gap);
   }
 }
 
 .v-theme--light {
   .pull-down {
     &__progress-circular {
-      color: map-get($adm-colors, 'grey');
+      color: map.get(colors.$adm-colors, 'grey');
 
       &--activated {
-        color: map-get($adm-colors, 'muted');
+        color: var(--a-color-text-muted-light);
       }
     }
 
     &__action-text {
-      color: map-get($adm-colors, 'grey');
+      color: map.get(colors.$adm-colors, 'grey');
 
       &--activated {
-        color: map-get($adm-colors, 'muted');
+        color: var(--a-color-text-muted-light);
       }
     }
   }
@@ -146,18 +147,18 @@ export default defineComponent({
 .v-theme--dark {
   .pull-down {
     &__progress-circular {
-      color: map-get($adm-colors, 'secondary2-transparent');
+      color: map.get(colors.$adm-colors, 'secondary2-transparent');
 
       &--activated {
-        color: map-get($shades, 'white');
+        color: map.get(settings.$shades, 'white');
       }
     }
 
     &__action-text {
-      color: map-get($adm-colors, 'grey');
+      color: map.get(colors.$adm-colors, 'grey');
 
       &--activated {
-        color: map-get($shades, 'white');
+        color: map.get(settings.$shades, 'white');
       }
     }
   }

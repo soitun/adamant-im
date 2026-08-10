@@ -1,13 +1,19 @@
-import BigNumber from '@/lib/bignumber'
-import BtcBaseApi from '../../../lib/bitcoin/btc-base-api'
-import { FetchStatus } from '@/lib/constants'
-import { nodes } from '../../../lib/nodes'
-import { createPendingTransaction, PendingTxStore } from '../../../lib/pending-transactions'
-import { storeCryptoAddress } from '../../../lib/store-crypto-address'
-import * as tf from '../../../lib/transactionsFetching'
-import shouldUpdate from '../../utils/coinUpdatesGuard'
+import { BigNumber } from '@/lib/bignumber'
+import BtcBaseApi from '@/lib/bitcoin/btc-base-api'
+import { CryptosInfo, FetchStatus } from '@/lib/constants'
+import { nodes } from '@/lib/nodes'
+import {
+  assertNoPendingTransaction,
+  createPendingTransaction,
+  invalidatePendingTransaction,
+  PendingTxStore
+} from '@/lib/pending-transactions'
+import { storeCryptoAddress, validateStoredCryptoAddresses } from '@/lib/store-crypto-address'
+import shouldUpdate from '@/store/utils/coinUpdatesGuard'
+import { logger } from '@/utils/devTools/logger'
 
 const DEFAULT_CUSTOM_ACTIONS = () => ({})
+let interval
 
 /**
  * @typedef {Object} Options
@@ -15,6 +21,8 @@ const DEFAULT_CUSTOM_ACTIONS = () => ({})
  * @property {function(BtcBaseApi, object): Promise} getNewTransactions function to get the new transactions list (second arg is a Vuex context)
  * @property {function(BtcBaseApi, object): Promise} getOldTransactions function to get the old transactions list (second arg is a Vuex context)
  * @property {function(function(): BtcBaseApi): object} customActions function to create custom actions for the current crypto (optional)
+ * @property {number || undefined} balanceCheckInterval interval (ms) between balance updates for specific coins
+ * @property {number || undefined} balanceValidInterval interval (ms) until specific balance becomes invalid
  * @property {number} fetchRetryTimeout interval (ms) between attempts to fetch the registered transaction details
  */
 
@@ -24,12 +32,7 @@ const DEFAULT_CUSTOM_ACTIONS = () => ({})
  */
 function createActions(options) {
   const Api = options.apiCtor || BtcBaseApi
-  const {
-    getNewTransactions,
-    getOldTransactions,
-    customActions = DEFAULT_CUSTOM_ACTIONS,
-    fetchRetryTimeout
-  } = options
+  const { getNewTransactions, getOldTransactions, customActions = DEFAULT_CUSTOM_ACTIONS } = options
 
   /** @type {BtcBaseApi} */
   let api = null
@@ -47,10 +50,6 @@ function createActions(options) {
         const pendingTransaction = PendingTxStore.get(context.state.crypto)
         if (pendingTransaction) {
           context.commit('transactions', [pendingTransaction])
-          context.dispatch('getTransaction', {
-            hash: pendingTransaction.hash,
-            force: true
-          })
         }
       }
     },
@@ -83,7 +82,6 @@ function createActions(options) {
      * @returns {Promise<void>}
      */
     updateBalance: {
-      root: true,
       async handler({ commit, rootGetters, state }, payload = {}) {
         const coin = state.crypto
 
@@ -97,14 +95,47 @@ function createActions(options) {
 
         try {
           const balance = await api.getBalance()
+          const validInterval = options.balanceValidInterval || CryptosInfo.BTC.balanceValidInterval
 
           commit('status', { balance })
           commit('setBalanceStatus', FetchStatus.Success)
+          commit('setBalanceActualUntil', Date.now() + validInterval)
         } catch (err) {
           commit('setBalanceStatus', FetchStatus.Error)
-
-          throw err
+          logger.log('btc-base-actions', 'warn', err)
         }
+      }
+    },
+
+    /** Wrapper to manually request balance update if needed */
+    requestBalanceUpdate: {
+      root: true,
+      handler({ dispatch }) {
+        dispatch('updateBalance')
+      }
+    },
+
+    initBalanceUpdate: {
+      root: true,
+      handler({ dispatch }) {
+        function repeat() {
+          validateStoredCryptoAddresses()
+          dispatch('updateBalance')
+            .catch((err) => logger.log('btc-base-actions', 'warn', err))
+            .then(() => {
+              interval = setTimeout(() => {
+                repeat()
+              }, options.balanceCheckInterval || CryptosInfo.BTC.balanceCheckInterval)
+            })
+        }
+        repeat()
+      }
+    },
+
+    stopInterval: {
+      root: true,
+      handler() {
+        clearTimeout(interval)
       }
     },
 
@@ -122,7 +153,7 @@ function createActions(options) {
         })
         .catch((err) => {
           context.commit('setBalanceStatus', FetchStatus.Error)
-          throw err
+          logger.log('btc-base-actions', 'warn', err)
         })
     },
 
@@ -139,12 +170,19 @@ function createActions(options) {
       }
       await nodes[nodeName].assertAnyNodeOnline()
 
-      // 2. Sign transaction offline
+      // 2. Invalidate previous pending transaction if finalized
+      await invalidatePendingTransaction(crypto, async (hashLocal) => {
+        const transaction = await api.getTransaction(hashLocal)
+        return !!transaction && transaction.confirmations > 0
+      })
+
+      // 3. Sign transaction offline
       const signedTransaction = await api.createTransaction(address, amount, fee)
 
-      // 3. Ensure there is no pending transaction (skipped, no nonce in BTC like cryptos)
+      // 4. Ensure there is no pending transaction (skipped, no nonce in BTC like cryptos)
+      await assertNoPendingTransaction(context.state.crypto, 0)
 
-      // 4. Send crypto transfer message to ADM blockchain (if ADM address provided)
+      // 5. Send crypto transfer message to ADM blockchain (if ADM address provided)
       if (admAddress) {
         const msgPayload = {
           address: admAddress,
@@ -163,7 +201,7 @@ function createActions(options) {
         }
       }
 
-      // 5. Save pending transaction
+      // 6. Save pending transaction
       const pendingTransaction = createPendingTransaction({
         hash: signedTransaction.txid,
         senderId: context.state.address,
@@ -174,10 +212,12 @@ function createActions(options) {
       await PendingTxStore.save(context.state.crypto, pendingTransaction)
       context.commit('transactions', [pendingTransaction])
 
-      // 6. Send signed transaction to the blockchain
+      // 7. Send signed transaction to the blockchain
       try {
         const hash = await api.sendTransaction(signedTransaction.hex)
-        console.log(
+        logger.log(
+          'btc-base-actions',
+          'info',
           `${crypto} transaction has been sent: localHash: ${signedTransaction.txid}, responseHash: ${hash}`
         )
 
@@ -192,112 +232,12 @@ function createActions(options) {
           }
         ])
 
-        context.dispatch('getTransaction', { hash, force: true })
-
         return hash
       } catch (error) {
         context.commit('transactions', [{ hash: signedTransaction.txid, status: 'REJECTED' }])
         PendingTxStore.remove(context.state.crypto)
         throw error
       }
-    },
-
-    /**
-     * Retrieves transaction details
-     * @param {object} context Vuex action context
-     * @param {{hash: string, force: boolean, timestamp: number, amount: number}} payload hash and timestamp of the transaction to fetch
-     */
-    async getTransaction(context, payload) {
-      if (!api) return
-      if (!payload.hash) return
-
-      let existing = context.state.transactions[payload.hash]
-      if (existing && !payload.force) return
-
-      if (!existing || payload.dropStatus) {
-        payload.updateOnly = false
-        context.commit('transactions', [
-          {
-            hash: payload.hash,
-            timestamp: (existing && existing.timestamp) || payload.timestamp || Date.now(),
-            amount: payload.amount,
-            status: 'PENDING'
-          }
-        ])
-        existing = context.state.transactions[payload.hash]
-      }
-
-      let tx = null
-      try {
-        tx = await api.getTransaction(payload.hash)
-      } catch (e) {
-        /* empty */
-      }
-
-      let retry = false
-      let retryTimeout = 0
-      const attempt = payload.attempt || 0
-
-      if (tx) {
-        context.commit('transactions', [tx])
-        // The transaction has been confirmed, we're done here
-        if (tx.status === 'CONFIRMED') return
-        // If it's not confirmed but is already registered, keep on trying to fetch its details
-        retryTimeout = tf.getRegisteredTxRetryTimeout(
-          tx.timestamp || existing.timestamp || payload.timestamp,
-          context.state.crypto,
-          fetchRetryTimeout,
-          tx.instantsend
-        )
-        retry = true
-      } else if (existing && existing.status === 'REGISTERED') {
-        // We've failed to fetch the details for some reason, but the transaction is known to be
-        // accepted by the network - keep on fetching
-        retryTimeout = tf.getRegisteredTxRetryTimeout(
-          existing.timestamp || payload.timestamp,
-          context.state.crypto,
-          fetchRetryTimeout,
-          existing.instantsend
-        )
-        retry = true
-      } else {
-        // The network does not yet know this transaction. We'll make several attempts to retrieve it.
-        retry =
-          attempt <
-          tf.getPendingTxRetryCount(existing.timestamp || payload.timestamp, context.state.crypto)
-        retryTimeout = tf.getPendingTxRetryTimeout(
-          existing.timestamp || payload.timestamp,
-          context.state.crypto
-        )
-      }
-
-      if (!retry) {
-        // If we're here, we have abandoned any hope to get the transaction details.
-        context.commit('transactions', [{ hash: payload.hash, status: 'REJECTED' }])
-      } else if (!payload.updateOnly) {
-        // Try to get the details one more time
-        const newPayload = {
-          ...payload,
-          attempt: attempt + 1,
-          force: true,
-          updateOnly: false,
-          dropStatus: false
-        }
-        setTimeout(() => context.dispatch('getTransaction', newPayload), retryTimeout)
-      }
-    },
-
-    /**
-     * Updates the transaction details
-     * @param {{ dispatch: function }} param0 Vuex context
-     * @param {{hash: string}} payload action payload
-     */
-    updateTransaction({ dispatch }, payload) {
-      return dispatch('getTransaction', {
-        ...payload,
-        force: payload.force,
-        updateOnly: payload.updateOnly
-      })
     },
 
     getNewTransactions(context) {

@@ -1,23 +1,27 @@
 <template>
   <v-icon
     v-if="voted"
-    :class="{
-      [classes.icon]: true,
-      [classes.iconGood]: !originalVoted
-    }"
-    :icon="originalVoted ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
-    size="large"
+    :class="[
+      classes.root,
+      classes.icon,
+      {
+        [classes.iconGood]: !originalVoted
+      }
+    ]"
+    :icon="originalVoted ? mdiThumbUp : mdiThumbUpOutline"
     @click="handleDownVote"
   />
 
   <v-icon
     v-else
-    :class="{
-      [classes.icon]: true,
-      [classes.iconDanger]: originalVoted
-    }"
-    :icon="originalVoted ? 'mdi-thumb-down-outline' : 'mdi-thumb-up-outline'"
-    size="large"
+    :class="[
+      classes.root,
+      classes.icon,
+      {
+        [classes.iconDanger]: originalVoted
+      }
+    ]"
+    :icon="originalVoted ? mdiThumbDownOutline : mdiThumbUpOutline"
     @click="handleUpVote"
   />
 </template>
@@ -25,6 +29,8 @@
 <script>
 import { computed, toRefs } from 'vue'
 import { useStore } from 'vuex'
+
+import { mdiThumbUp, mdiThumbUpOutline, mdiThumbDownOutline } from '@mdi/js'
 
 const className = 'delegate-vote-checkbox'
 const classes = {
@@ -63,43 +69,57 @@ export default {
       voted,
       handleUpVote,
       handleDownVote,
-      classes
+      classes,
+      mdiThumbDownOutline,
+      mdiThumbUp,
+      mdiThumbUpOutline
     }
   }
 }
 </script>
 
 <style lang="scss">
-@import 'vuetify/settings';
-@import '@/assets/styles/themes/adamant/_mixins.scss';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss';
+@use 'vuetify/settings';
 
 .delegate-vote-checkbox {
+  --a-delegate-vote-checkbox-icon-size: var(--a-space-6);
+
   &__icon {
-    font-size: 24px !important;
-    height: 24px !important;
-
-    &--good {
-      color: map-get($adm-colors, 'good');
-    }
-
-    &--danger {
-      color: map-get($adm-colors, 'danger');
-    }
+    font-size: var(--a-delegate-vote-checkbox-icon-size);
+    inline-size: var(--a-delegate-vote-checkbox-icon-size);
+    block-size: var(--a-delegate-vote-checkbox-icon-size);
   }
 }
 
+/** Themes **/
 .v-theme--light {
   .delegate-vote-checkbox {
     &__icon {
-      color: map-get($adm-colors, 'muted');
+      color: var(--a-color-text-muted-light);
+      &--good {
+        color: map.get(colors.$adm-colors, 'good');
+      }
+
+      &--danger {
+        color: map.get(colors.$adm-colors, 'danger');
+      }
     }
   }
 }
 
-.dark {
+.v-theme--dark {
   .delegate-vote-checkbox {
     &__icon {
+      &--good {
+        color: map.get(colors.$adm-colors, 'good');
+      }
+
+      &--danger {
+        color: map.get(colors.$adm-colors, 'danger');
+      }
     }
   }
 }

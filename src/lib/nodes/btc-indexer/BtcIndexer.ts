@@ -1,0 +1,60 @@
+import { createBtcLikeClient } from '../utils/createBtcLikeClient'
+import { AxiosInstance, AxiosRequestConfig } from 'axios'
+import { Node } from '@/lib/nodes/abstract.node'
+import { NODE_LABELS } from '@/lib/nodes/constants'
+import type { NodeInfo } from '@/types/wallets'
+
+/**
+ * Encapsulates a node. Provides methods to send API-requests
+ * to the node and verify is status (online/offline, version, ping, etc.)
+ */
+export class BtcIndexer extends Node<AxiosInstance> {
+  constructor(endpoint: NodeInfo) {
+    super(endpoint, 'btc', 'service', NODE_LABELS.BtcIndexer)
+  }
+
+  protected buildClient(): AxiosInstance {
+    return createBtcLikeClient(this.url, this.healthcheckRequestTimeoutMs)
+  }
+
+  protected async checkHealth() {
+    const time = Date.now()
+    const baseURL = this.getBaseURL(this)
+
+    const blockNumber = await this.client
+      .get('/blocks/tip/height', {
+        baseURL
+      })
+      .then((res) => {
+        return Number(res.data) || 0
+      })
+
+    return {
+      height: Number(blockNumber),
+      ping: Date.now() - time
+    }
+  }
+
+  /**
+   * Performs a request to the Bitcoin indexer.
+   */
+  async request<Response = any, Params = any>(
+    method: 'GET' | 'POST',
+    path: string,
+    params?: Params,
+    requestConfig?: AxiosRequestConfig<Params, Params>
+  ): Promise<Response> {
+    const baseURL = this.getBaseURL(this)
+
+    return this.client
+      .request({
+        ...requestConfig,
+        baseURL,
+        url: path,
+        method,
+        params: method === 'GET' ? params : undefined,
+        data: method === 'POST' ? params : undefined
+      })
+      .then((res) => res.data)
+  }
+}

@@ -1,0 +1,128 @@
+<template>
+  <div :class="classes.root">
+    <div :class="classes.preview">
+      <img v-if="file.isImage" :class="classes.img" :alt="file.name" :src="file.content" />
+      <IconFile
+        :class="classes.icon"
+        :text="extension"
+        :height="previewSize"
+        :width="previewSize"
+        v-else
+      />
+
+      <v-icon
+        :size="CHAT_FILES_PREVIEW_REMOVE_ICON_SIZE"
+        :icon="mdiClose"
+        @click="$emit('remove')"
+        :class="classes.removeIcon"
+      />
+    </div>
+
+    <p :class="classes.fileName">{{ file.name }}</p>
+  </div>
+</template>
+
+<script lang="ts">
+import { computed, defineComponent, PropType } from 'vue'
+
+import {
+  CHAT_FILES_PREVIEW_REMOVE_ICON_SIZE,
+  CHAT_FILES_PREVIEW_SIZE
+} from '@/components/AChat/helpers/uiMetrics'
+import { extractFileExtension, formatFileExtension, FileData } from '@/lib/files'
+import IconFile from '@/components/icons/common/IconFile.vue'
+import { mdiClose } from '@mdi/js'
+
+const className = 'preview-file'
+const classes = {
+  root: className,
+  preview: `${className}__preview`,
+  img: `${className}__img`,
+  icon: `${className}__icon`,
+  removeIcon: `${className}__remove-icon`,
+  fileName: `${className}__file-name`
+}
+const previewSize = CHAT_FILES_PREVIEW_SIZE
+
+export default defineComponent({
+  components: {
+    IconFile
+  },
+  emits: ['remove'],
+  props: {
+    file: {
+      type: Object as PropType<FileData>,
+      required: true
+    }
+  },
+  setup(props) {
+    const extension = computed(() => {
+      const fileExtension = extractFileExtension(props.file.name)
+      return formatFileExtension(fileExtension)
+    })
+
+    return {
+      classes,
+      extension,
+      previewSize,
+      CHAT_FILES_PREVIEW_REMOVE_ICON_SIZE,
+      mdiClose
+    }
+  }
+})
+</script>
+
+<style lang="scss" scoped>
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss';
+
+.preview-file {
+  width: var(--a-chat-files-preview-size);
+
+  &__preview {
+    width: var(--a-chat-files-preview-size);
+    height: var(--a-chat-files-preview-size);
+    position: relative;
+  }
+
+  &__img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &__file-name {
+    font-size: var(--a-chat-files-preview-file-name-font-size);
+    font-weight: 400;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__remove-icon {
+    position: absolute;
+    top: var(--a-chat-files-preview-remove-offset);
+    right: var(--a-chat-files-preview-remove-offset);
+    border-radius: 50%;
+  }
+}
+
+.v-theme--light {
+  .preview-file {
+    &__remove-icon {
+      background-color: map.get(colors.$adm-colors, 'regular');
+      color: white;
+    }
+  }
+}
+
+.v-theme--dark {
+  .preview-file {
+    &__remove-icon {
+      background-color: map.get(colors.$adm-colors, 'regular');
+      color: white;
+    }
+  }
+}
+</style>

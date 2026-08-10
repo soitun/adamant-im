@@ -1,17 +1,5 @@
-import { NodeType } from '@/lib/nodes/types'
-import { getNodeHealthcheckConfig } from './getHealthcheckConfig'
-
-/**
- * Allowed height delta for the nodes.
- *
- * If two nodes' heights differ by no more than this value,
- * they are considered to be in sync with each other.
- */
-function getHeightEpsilon(nodeType: NodeType): number {
-  const config = getNodeHealthcheckConfig(nodeType)
-
-  return config.threshold
-}
+import { TNodeLabel } from '@/lib/nodes/constants'
+import { getNodeSyncThreshold } from './getHealthcheckConfig'
 
 interface Node {
   height: number
@@ -27,7 +15,10 @@ type GroupNodes<N extends Node> = {
  * height (considering HEIGHT_EPSILON). These nodes are considered to be in sync with the network,
  * all the others are not.
  */
-export function filterSyncedNodes<N extends Node>(nodes: N[], type: NodeType): GroupNodes<N> {
+export function filterSyncedNodes<N extends Node>(
+  nodes: N[],
+  nodeLabel: TNodeLabel
+): GroupNodes<N> {
   if (nodes.length === 0) {
     return {
       height: 0,
@@ -35,7 +26,7 @@ export function filterSyncedNodes<N extends Node>(nodes: N[], type: NodeType): G
     }
   }
 
-  const heightEpsilon = getHeightEpsilon(type)
+  const heightEpsilon = getNodeSyncThreshold(nodeLabel)
 
   // For each node we take its height and list of nodes that have the same height ± epsilon
   const groups = nodes.map((node) => {
@@ -52,7 +43,11 @@ export function filterSyncedNodes<N extends Node>(nodes: N[], type: NodeType): G
    * the one with the biggest height wins.
    * */
   const winner = groups.reduce((acc, curr) => {
-    if (curr.height > acc.height || curr.nodes.length > acc.nodes.length) {
+    const hasMoreNodes = curr.nodes.length > acc.nodes.length
+    const hasSameNodeCountAtHigherHeight =
+      curr.nodes.length === acc.nodes.length && curr.height > acc.height
+
+    if (hasMoreNodes || hasSameNodeCountAtHigherHeight) {
       return curr
     }
 

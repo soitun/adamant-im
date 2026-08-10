@@ -1,26 +1,21 @@
 <template>
-  <v-toolbar flat height="56" :class="`${className}`" color="transparent">
-    <v-btn icon @click="goBack">
+  <v-toolbar flat :class="`${className}`" color="transparent">
+    <back-button @click="goBack" v-if="isMobileView">
       <v-badge
         v-if="numOfNewMessages > 0"
         :value="numOfNewMessages"
         color="primary"
         :class="`${className}__messages-counter`"
-        :content="numOfNewMessages > 99 ? '99+' : numOfNewMessages"
+        :content="messagesCounterContent"
       >
       </v-badge>
-      <v-icon icon="mdi-arrow-left" />
-    </v-btn>
+    </back-button>
     <div v-if="!isWelcomeChat(partnerId)">
       <slot name="avatar-toolbar" />
     </div>
     <div :class="`${className}__textfield-container`">
-      <div
-        v-if="isWelcomeChat(partnerId)"
-        :class="`${className}__adm-chat-name`"
-        :style="{ paddingLeft: '12px' }"
-      >
-        {{ $t('chats.virtual.welcome_message_title') }}
+      <div v-if="isWelcomeChat(partnerId)" :class="`${className}__adm-chat-name`">
+        {{ t('chats.virtual.welcome_message_title') }}
       </div>
       <div v-else>
         <v-text-field
@@ -40,81 +35,118 @@
   </v-toolbar>
 </template>
 
-<script>
-import partnerName from '@/mixins/partnerName'
+<script setup lang="ts">
+import { useScreenSize } from '@/hooks/useScreenSize'
+import BackButton from '@/components/common/BackButton/BackButton.vue'
+import { computed } from 'vue'
+import { useStore } from 'vuex'
+import { useRouter } from 'vue-router'
 import { isAdamantChat, isWelcomeChat } from '@/lib/chat/meta/utils'
+import { useI18n } from 'vue-i18n'
+import { useChatName } from '@/components/AChat/hooks/useChatName'
+import { CHAT_TOOLBAR_UNREAD_COUNTER_MAX } from './helpers/uiMetrics'
 
-export default {
-  mixins: [partnerName],
-  props: {
-    partnerId: {
-      type: String,
-      required: true
-    }
-  },
-  emits: ['partner-info'],
-  computed: {
-    className: () => 'chat-toolbar',
-    partnerName: {
-      get() {
-        return this.getPartnerName(this.partnerId)
-      },
-      set(value) {
-        this.$store.commit('partners/displayName', {
-          partner: this.partnerId,
-          displayName: value
-        })
-      }
-    },
-    numOfNewMessages() {
-      return this.$store.getters['chat/numWithoutTheCurrentChat'](this.partnerId)
-    }
-  },
-  data: () => ({
-    lastPath: null
-  }),
-  created() {
-    this.lastPath = this.$router.options.history.state.back
-  },
-  methods: {
-    goBack() {
-      if (this.lastPath === '/chats') {
-        this.$router.back()
-      } else {
-        this.$router.push({ name: 'Chats' })
-      }
-    },
-    showPartnerInfo() {
-      this.$emit('partner-info', true)
-    },
-    isAdamantChat,
-    isWelcomeChat
+const { partnerId } = defineProps({
+  partnerId: {
+    type: String,
+    required: true
   }
+})
+
+const className = 'chat-toolbar'
+
+const store = useStore()
+const router = useRouter()
+const { t } = useI18n()
+
+const { isMobileView } = useScreenSize()
+
+const name = useChatName(partnerId)
+
+const partnerName = computed({
+  get: () => name.value,
+  set(value) {
+    store.commit('partners/displayName', {
+      partner: partnerId,
+      displayName: value
+    })
+  }
+})
+
+const numOfNewMessages = computed(() => store.getters['chat/numWithoutTheCurrentChat'](partnerId))
+const messagesCounterContent = computed(() => {
+  return numOfNewMessages.value > CHAT_TOOLBAR_UNREAD_COUNTER_MAX
+    ? `${CHAT_TOOLBAR_UNREAD_COUNTER_MAX}+`
+    : numOfNewMessages.value
+})
+
+const goBack = () => {
+  router.push({ name: 'Chats' })
 }
 </script>
 
 <style lang="scss" scoped>
-@import '@/assets/styles/themes/adamant/_mixins.scss';
-@import 'vuetify/settings';
-@import '@/assets/styles/settings/_colors.scss';
+@use 'sass:map';
+@use '@/assets/styles/settings/_colors.scss';
+@use '@/assets/styles/themes/adamant/_mixins.scss';
+@use '@/assets/styles/generic/_variables.scss';
+@use 'vuetify/settings';
 
 .chat-toolbar {
+  --a-chat-toolbar-padding-inline-start: var(--a-space-4);
+  --a-chat-toolbar-content-gap: var(--a-space-2);
+  --a-chat-toolbar-content-gap-mobile: var(--a-chat-toolbar-content-gap);
+  --a-chat-toolbar-back-button-margin-inline-end-mobile: var(--a-space-1);
+  --a-chat-toolbar-content-padding-inline-end: var(--a-space-3);
+  --a-chat-toolbar-content-padding-inline-end-mobile: var(--a-space-2);
+  --a-chat-toolbar-counter-offset-top: calc((var(--a-space-3) + (var(--a-space-1) / 2)) * -1);
+  --a-chat-toolbar-counter-offset-left: calc(var(--a-space-1) / -2);
+  --a-chat-toolbar-adm-name-letter-spacing: var(--a-letter-spacing-caps-subtle);
+  --a-chat-toolbar-label-font-size: var(--a-font-size-md);
+  --a-chat-toolbar-input-padding-top: var(--a-space-5);
+  --a-chat-toolbar-input-font-weight: var(--a-font-weight-medium);
+  --a-chat-toolbar-floating-label-font-size: var(--a-space-5);
+  --a-chat-toolbar-floating-label-offset-y: calc(var(--a-space-3) / -2);
+  --a-chat-toolbar-floating-label-scale: var(--a-field-floating-label-scale);
+
   flex-grow: 0;
   flex-shrink: 0;
+  padding-inline-start: var(--a-chat-toolbar-padding-inline-start);
+
+  :deep(.v-toolbar__content) {
+    min-height: var(--toolbar-height) !important;
+    height: var(--toolbar-height) !important;
+    gap: var(--a-chat-toolbar-content-gap);
+    padding-inline-end: var(--a-chat-toolbar-content-padding-inline-end);
+  }
+
+  @media (max-width: map.get(variables.$breakpoints, 'mobile')) {
+    padding-inline-start: 0;
+
+    :deep(.v-toolbar__content) {
+      gap: var(--a-chat-toolbar-content-gap-mobile);
+      padding-inline-end: var(--a-chat-toolbar-content-padding-inline-end-mobile);
+    }
+
+    // Keep avatar/name spacing unchanged and only tighten the back-button to avatar gap.
+    :deep(.v-toolbar__content > .back-button:first-child) {
+      margin-inline-end: var(--a-chat-toolbar-back-button-margin-inline-end-mobile) !important;
+    }
+  }
 
   &__messages-counter {
     position: relative;
-    top: -14px;
-    left: -2px;
+    top: var(--a-chat-toolbar-counter-offset-top);
+    left: var(--a-chat-toolbar-counter-offset-left);
   }
   &__textfield-container {
     width: 100%;
+    min-width: 0;
   }
 
   &__adm-chat-name {
-    font-size: 20px;
-    font-weight: 500;
-    letter-spacing: 0.02em;
+    @include mixins.a-text-header();
+    letter-spacing: var(--a-chat-toolbar-adm-name-letter-spacing);
   }
 
   &__textfield {
@@ -133,36 +165,30 @@ export default {
     }
   }
 
-  :deep(.v-toolbar__content > .v-btn:first-child) {
-    width: 36px;
-    height: 36px;
-    margin: 0 12px;
-    border-radius: 50%;
-  }
-
   :deep(.v-text-field) {
-    @include a-text-regular-enlarged-bold();
+    @include mixins.a-text-regular-enlarged-bold();
 
     .v-field__field {
       .v-label.v-field-label {
         max-width: unset;
-        @include a-text-regular-enlarged-bold();
-        font-size: 16px;
+        @include mixins.a-text-regular-enlarged-bold();
+        font-size: var(--a-chat-toolbar-label-font-size);
       }
     }
 
     .v-field__input {
-      line-height: 20px;
-      padding-top: 20px;
-      font-weight: 500;
+      line-height: var(--a-line-height-sm);
+      padding-top: var(--a-chat-toolbar-input-padding-top);
+      font-weight: var(--a-chat-toolbar-input-font-weight);
     }
 
     .v-field__outline {
       .v-label.v-field-label.v-field-label--floating {
-        line-height: 20px;
-        font-size: 20px;
-        transform: translateY(-6px) scale(0.6875);
-        font-weight: 500;
+        line-height: var(--a-line-height-sm);
+        font-size: var(--a-chat-toolbar-floating-label-font-size);
+        transform: translateY(var(--a-chat-toolbar-floating-label-offset-y))
+          scale(var(--a-chat-toolbar-floating-label-scale));
+        font-weight: var(--a-chat-toolbar-input-font-weight);
       }
     }
 
@@ -174,32 +200,25 @@ export default {
       margin-bottom: 0;
     }
   }
-
-  :deep(.v-btn) {
-    &:hover > .v-btn__overlay {
-      opacity: 0.2;
-      transition: all 0.4s ease;
-    }
-  }
 }
 
 /** Themes **/
 .v-theme--light {
   .chat-toolbar {
-    background-color: map-get($adm-colors, 'secondary2-transparent');
+    background-color: var(--a-color-surface-soft-light);
 
     :deep(.v-text-field) {
       .primary--text {
-        color: map-get($grey, 'darken-1') !important;
+        color: map.get(settings.$grey, 'darken-1') !important;
       }
       .v-label {
-        color: map-get($grey, 'darken-4');
+        color: map.get(settings.$grey, 'darken-4');
       }
       .v-label--active {
-        color: map-get($grey, 'darken-1');
+        color: map.get(settings.$grey, 'darken-1');
       }
       input {
-        caret-color: map-get($adm-colors, 'primary2');
+        caret-color: map.get(colors.$adm-colors, 'primary2');
       }
     }
   }
@@ -208,16 +227,16 @@ export default {
   .chat-toolbar {
     :deep(.v-text-field) {
       .primary--text {
-        color: map-get($shades, 'white') !important;
+        color: map.get(settings.$shades, 'white') !important;
       }
       .v-label {
-        color: map-get($shades, 'white');
+        color: map.get(settings.$shades, 'white');
       }
       .v-label--active {
-        color: map-get($shades, 'white');
+        color: map.get(settings.$shades, 'white');
       }
       input {
-        caret-color: map-get($adm-colors, 'primary');
+        caret-color: map.get(colors.$adm-colors, 'primary');
       }
     }
   }
